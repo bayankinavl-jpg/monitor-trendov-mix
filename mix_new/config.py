@@ -9,6 +9,7 @@ MAIN_DB_PATH = DATA_DIR / "registry.sqlite3"
 
 KEYWORDS_PATH = BASE_DIR / "keywords.yml"
 SOURCES_PATH = BASE_DIR / "sources.yml"
+LAW_ALIASES_PATH = BASE_DIR / "reference" / "law_aliases.json"
 
 MOSCOW_TZ_NAME = "Europe/Moscow"
 
