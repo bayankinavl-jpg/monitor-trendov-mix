@@ -49,8 +49,10 @@ _AMENDMENT_BY_WORD = {
 }
 
 # «N 1327» — так номер пишет КонсультантПлюс (латинская N вместо №).
+# После «№» номер целиком: «209/пр», «456н», «ЕД-1-3/654@». После латинской N —
+# только номер, начинающийся с цифры, чтобы не принять за номер слово на N.
 _ACT_NUMBER_RE = re.compile(
-    r"(?:№|(?<!\w)N)\s*(\d+(?:-[\w]+)?)|(?<![\w-])(\d{1,4}-(?:ФКЗ|ФЗ|рп))(?!\w)"
+    r"№\s*([0-9A-Za-zА-Яа-яЁё][\w\-/@]*)|(?<!\w)N\s*(\d[\w\-/@]*)|(?<![\w-])(\d{1,4}-(?:ФКЗ|ФЗ|рп))(?!\w)"
 )
 _MONTHS = {
     "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
@@ -121,16 +123,17 @@ def _safe_date(year: str, month: int, day: str) -> date | None:
 
 def extract_act_requisites(text: str) -> tuple[str | None, date | None]:
     number_match = _ACT_NUMBER_RE.search(text)
-    number = (number_match.group(1) or number_match.group(2)) if number_match else None
+    number = next(g for g in number_match.groups() if g) if number_match else None
 
+    # Берём первую по тексту дату: дата самого акта стоит раньше дат актов,
+    # на которые он ссылается («от 3 сентября 2026 г. …, от 28.07.2014»).
     act_date = None
     numeric = _ACT_DATE_NUMERIC_RE.search(text)
-    if numeric:
+    words = _ACT_DATE_WORDS_RE.search(text)
+    if numeric and (not words or numeric.start() < words.start()):
         act_date = _safe_date(numeric.group(3), int(numeric.group(2)), numeric.group(1))
-    else:
-        words = _ACT_DATE_WORDS_RE.search(text)
-        if words:
-            act_date = _safe_date(words.group(3), _MONTHS[words.group(2).lower()], words.group(1))
+    elif words:
+        act_date = _safe_date(words.group(3), _MONTHS[words.group(2).lower()], words.group(1))
 
     return number, act_date
 

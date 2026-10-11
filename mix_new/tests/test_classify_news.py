@@ -95,3 +95,21 @@ def test_extract_act_requisites_missing():
     number, act_date = extract_act_requisites("Готовится новый законопроект")
     assert number is None
     assert act_date is None
+
+
+def test_extract_act_requisites_number_with_letters_and_first_date():
+    # Случай из прогона 11.10.2026: номер с буквами и ссылка на старый приказ.
+    text = ('Приказ Федеральной налоговой службы от 3 сентября 2026 г. № ЕД-1-3/654@ "Об утверждении формы" '
+            '(признан утратившим силу приказ от 28.07.2014) (Зарегистрировано в Минюсте России N 88601)')
+    number, act_date = extract_act_requisites(text)
+    assert number == "ЕД-1-3/654@"
+    assert act_date == date(2026, 9, 3)
+
+
+def test_extract_act_requisites_keeps_number_suffix():
+    assert extract_act_requisites("Приказ Минстроя России от 06.04.2026 N 209/пр")[0] == "209/пр"
+    assert extract_act_requisites("Приказ Минтруда России от 01.10.2026 № 456н")[0] == "456н"
+
+
+def test_latin_n_before_word_is_not_a_number():
+    assert extract_act_requisites("Чай N Greenfield запрещён")[0] is None
