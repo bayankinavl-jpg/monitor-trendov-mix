@@ -8,6 +8,7 @@ from datetime import date
 
 from models import Credibility
 
+PRIMARY = "primary_source"
 OFFICIAL = "official_publication"
 LEGAL = "legal"
 PUBLICATION_STAGES = {"опубликован", "подписан"}
@@ -27,7 +28,11 @@ def assess_credibility(
     is_legal = LEGAL in trust_tiers
     several_sources = independent_source_count >= 2
 
+    is_primary = PRIMARY in trust_tiers
+
     reasons = []
+    if is_primary:
+        reasons.append("источник — портал официального опубликования, ссылка ведёт на текст акта")
     if is_official:
         reasons.append("источник — официальное издание (Российская газета или Парламентская газета)")
     if is_legal:
@@ -42,7 +47,9 @@ def assess_credibility(
     for name in referenced_acts:
         reasons.append(f"упомянут известный акт: {name}")
 
-    if is_official and (has_requisites or stage in PUBLICATION_STAGES):
+    if is_primary:
+        level = Credibility.HIGH
+    elif is_official and (has_requisites or stage in PUBLICATION_STAGES):
         level = Credibility.HIGH
     elif is_legal and has_requisites:
         level = Credibility.HIGH

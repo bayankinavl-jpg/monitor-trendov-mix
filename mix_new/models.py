@@ -10,6 +10,7 @@ class Level(str, Enum):
     EAEU = "ЕАЭС"
     FEDERAL_LAW = "федеральный закон"
     UKAZ = "указ"
+    PARLIAMENT = "постановление палаты Федерального Собрания"
     GOV_ACT = "акт Правительства"
     DEPT_ORDER = "ведомственный приказ"
 

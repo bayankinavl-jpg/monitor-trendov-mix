@@ -8,13 +8,17 @@ from datetime import date
 
 from models import AmendmentType, Level
 from pipeline.act_reference import find_referenced_acts
-from pipeline.keywords_engine import IndustryGroup, KeywordSet
+from pipeline.keywords_engine import IndustryGroup, KeywordSet, phrase_in
+from pipeline.morph import lemmas
 from pipeline.normalize import normalize_text
 
 _LEVEL_BY_WORD = {
     "федеральный закон": Level.FEDERAL_LAW,
     "законопроект": Level.FEDERAL_LAW,
     "указ президента": Level.UKAZ,
+    "распоряжение президента": Level.UKAZ,
+    "постановление совета федерации": Level.PARLIAMENT,
+    "постановление государственной думы": Level.PARLIAMENT,
     "постановление правительства": Level.GOV_ACT,
     "распоряжение правительства": Level.GOV_ACT,
     "приказ": Level.DEPT_ORDER,
@@ -29,6 +33,7 @@ _STAGE_BY_WORD = {
     "третье чтение": "принят в чтении",
     "госдума приняла": "принят в чтении",
     "совет федерации одобрил": "принят в чтении",
+    "одобрение федерального закона": "принят в чтении",
     "подписал закон": "подписан",
     "опубликован": "опубликован",
     "вступает в силу": "вступает в силу",
@@ -55,7 +60,13 @@ _ACT_DATE_NUMERIC_RE = re.compile(r"\bот\s+(\d{1,2})\.(\d{1,2})\.(\d{4})")
 _ACT_DATE_WORDS_RE = re.compile(r"\bот\s+(\d{1,2})\s+(" + "|".join(_MONTHS) + r")\s+(\d{4})", re.IGNORECASE)
 
 
-def classify_level(matched: list[tuple[str, str]]) -> Level | None:
+def classify_level(matched: list[tuple[str, str]], title: str = "") -> Level | None:
+    # Официальный заголовок начинается с вида акта: «Постановление Государственной
+    # Думы … О проекте федерального закона». Начало заголовка важнее остальных слов.
+    head = lemmas(title)[:6]
+    for word, level in _LEVEL_BY_WORD.items():
+        if phrase_in(head, word):
+            return level
     for word, _group in matched:
         level = _LEVEL_BY_WORD.get(normalize_text(word))
         if level is not None:
@@ -132,7 +143,7 @@ def classify(title: str, annotation: str, matched: list[tuple[str, str]], keywor
     referenced_acts = [act.name for act in find_referenced_acts(text, act_date)]
     return {
         "amendment_type": classify_amendment_type(matched),
-        "level": classify_level(matched),
+        "level": classify_level(matched, title),
         "stage": classify_stage(matched),
         "topic": classify_topic(matched),
         "industry": industry,

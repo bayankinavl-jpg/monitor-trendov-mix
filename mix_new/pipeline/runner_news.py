@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 
 from models import NewsItem, RecordStatus
 from pipeline.classify_news import classify
-from pipeline.credibility import assess_credibility
+from pipeline.credibility import PRIMARY, assess_credibility
 from pipeline.dedupe_news import cluster_leads, independent_source_count
 from pipeline.keywords_engine import get_keyword_set
 from pipeline.link_registry import find_related_act_id
@@ -62,6 +62,9 @@ def run(conn: sqlite3.Connection, since: date, until: date, sources: list[NewsSo
 
         fields = classify(cluster.title, annotation, matched, keyword_set)
         trust_tiers = [lead.trust_tier for lead in cluster.leads]
+        # Запись портала официального опубликования — это уже опубликованный акт.
+        if PRIMARY in trust_tiers and fields["stage"] is None:
+            fields["stage"] = "опубликован"
         src_count = independent_source_count(cluster)
         credibility, credibility_reasons = assess_credibility(
             trust_tiers,

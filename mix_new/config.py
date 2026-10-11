@@ -18,12 +18,9 @@ HTTP_RETRY_COUNT = 1
 HTTP_USER_AGENT = "AI-Lab-RegNewsTracker/0.2 (+regulatory news registry for internal bank use)"
 REQUEST_DELAY_SECONDS = 1.0
 
-# Домены, к которым парсер не обращается никогда (см. tz_news_parser.md,
-# раздел "Источники новостей", правило 5) — запрет снимается отдельным
-# решением, если появится доступ из российской сети.
+# Домены, к которым парсер не обращается (tz_news_parser.md, раздел
+# "Источники новостей", правило 5). Запрет на pravo.gov.ru снят 11.10.2026.
 FORBIDDEN_DOMAINS = {
-    "pravo.gov.ru",
-    "publication.pravo.gov.ru",
     "regulation.gov.ru",
     "sozd.duma.gov.ru",
 }

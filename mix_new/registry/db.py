@@ -310,6 +310,9 @@ def _find_existing_news_item(conn: sqlite3.Connection, item: NewsItem) -> sqlite
             return row
 
     for row in rows:
+        # Разные номера актов — разные акты, даже если заголовки похожи.
+        if item.act_number and row["act_number"] and item.act_number != row["act_number"]:
+            continue
         score = difflib.SequenceMatcher(None, row["title"].lower(), item.title.lower()).ratio()
         if score >= _FUZZY_TITLE_THRESHOLD:
             return row

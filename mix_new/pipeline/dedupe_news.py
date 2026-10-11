@@ -7,6 +7,7 @@ from __future__ import annotations
 import difflib
 from dataclasses import dataclass, field
 
+from pipeline.classify_news import extract_act_requisites
 from pipeline.normalize import normalize_text, normalize_url
 from sources.news_scan import NewsLead
 
@@ -41,6 +42,15 @@ def canonical_source(lead: NewsLead) -> str:
     return lead.source_name
 
 
+def same_act_possible(title_a: str, title_b: str) -> bool:
+    """Заголовки разных актов бывают почти одинаковыми («… № 2826-р» и
+    «… № 2827-р»). Если в обоих указан номер акта и номера разные, это
+    разные акты, даже при похожих заголовках."""
+    number_a, _ = extract_act_requisites(title_a)
+    number_b, _ = extract_act_requisites(title_b)
+    return not (number_a and number_b and number_a != number_b)
+
+
 def cluster_leads(leads: list[NewsLead]) -> list[NewsCluster]:
     clusters: list[NewsCluster] = []
     cluster_by_link: dict[str, NewsCluster] = {}
@@ -51,6 +61,8 @@ def cluster_leads(leads: list[NewsLead]) -> list[NewsCluster]:
         cluster = cluster_by_link.get(norm_link)
         if cluster is None:
             for candidate in clusters:
+                if not same_act_possible(candidate.title, lead.title):
+                    continue
                 score = difflib.SequenceMatcher(None, candidate.title.lower(), lead.title.lower()).ratio()
                 if score >= FUZZY_TITLE_THRESHOLD:
                     cluster = candidate
