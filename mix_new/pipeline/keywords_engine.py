@@ -1,9 +1,10 @@
 """Загрузка keywords.yml и отбор новостей по правилам из tz_news_parser.md
 (раздел «Ключевые слова», правила 1-7).
 
-Слова ищутся по основе (подстрокой) без учёта регистра и с заменой ё на е
-— кроме аббревиатур (abbreviations), которые ищутся только целым словом,
-иначе они совпадают с частью других слов."""
+Сравнение идёт по нормальной форме слова (pymorphy3): «ставки», «ставку»
+совпадают с «ставка», а «Рыбаря» не совпадает с «рыба». Фраза из
+нескольких слов совпадает, если нормальные формы её слов идут в тексте
+подряд. Аббревиатуры (abbreviations) ищутся целым словом."""
 from __future__ import annotations
 
 import re
@@ -14,9 +15,10 @@ from pathlib import Path
 import yaml
 
 from config import KEYWORDS_PATH
+from pipeline.morph import lemmas
 from pipeline.normalize import normalize_text
 
-STEM_GROUPS = ("acts_and_bodies", "stages", "changes", "topics", "exclusions")
+WORD_GROUPS = ("acts_and_bodies", "stages", "changes", "topics", "exclusions")
 
 
 @dataclass
@@ -40,8 +42,8 @@ class KeywordSet:
 @dataclass
 class MatchResult:
     passed: bool
-    matched: list[tuple[str, str]]  # (слово, группа)
-    industries: list[IndustryGroup]  # отрасли, чьи слова нашлись в тексте
+    matched: list[tuple[str, str]]  # (слово из keywords.yml, группа)
+    industries: list[IndustryGroup]
 
 
 def load_keywords(path: Path = KEYWORDS_PATH) -> KeywordSet:
@@ -51,11 +53,7 @@ def load_keywords(path: Path = KEYWORDS_PATH) -> KeywordSet:
         for entry in raw.get("industries", [])
     ]
     return KeywordSet(
-        acts_and_bodies=[normalize_text(w) for w in raw.get("acts_and_bodies", [])],
-        stages=[normalize_text(w) for w in raw.get("stages", [])],
-        changes=[normalize_text(w) for w in raw.get("changes", [])],
-        topics=[normalize_text(w) for w in raw.get("topics", [])],
-        exclusions=[normalize_text(w) for w in raw.get("exclusions", [])],
+        **{group: [normalize_text(w) for w in raw.get(group, [])] for group in WORD_GROUPS},
         abbreviations=list(raw.get("abbreviations", [])),
         industries=industries,
     )
@@ -66,46 +64,48 @@ def get_keyword_set() -> KeywordSet:
     return load_keywords()
 
 
-def _stem_matches(text: str, words: list[str], group: str) -> list[tuple[str, str]]:
-    return [(w, group) for w in words if w in text]
+@lru_cache(maxsize=10_000)
+def _phrase_lemmas(phrase: str) -> tuple[str, ...]:
+    return tuple(lemmas(phrase))
+
+
+def phrase_in(text_lemmas: list[str], phrase: str) -> bool:
+    target = _phrase_lemmas(phrase)
+    if not target:
+        return False
+    n = len(target)
+    return any(tuple(text_lemmas[i:i + n]) == target for i in range(len(text_lemmas) - n + 1))
 
 
 def _abbreviation_matches(text: str, abbreviations: list[str]) -> list[tuple[str, str]]:
-    found = []
-    for abbr in abbreviations:
-        pattern = r"\b" + re.escape(abbr.lower()) + r"\b"
-        if re.search(pattern, text, flags=re.IGNORECASE):
-            found.append((abbr, "abbreviations"))
-    return found
-
-
-def _industry_matches(text: str, industries: list[IndustryGroup]) -> tuple[list[tuple[str, str]], list[IndustryGroup]]:
-    matched_words = []
-    matched_groups = []
-    for group in industries:
-        hits = [w for w in group.words if normalize_text(w) in text]
-        if hits:
-            matched_words.extend((w, "industries") for w in hits)
-            matched_groups.append(group)
-    return matched_words, matched_groups
+    return [
+        (abbr, "abbreviations")
+        for abbr in abbreviations
+        if re.search(r"(?<!\w)" + re.escape(abbr.lower()) + r"(?!\w)", text, flags=re.IGNORECASE)
+    ]
 
 
 def match(title: str, annotation: str | None = None, keyword_set: KeywordSet | None = None) -> MatchResult:
     keyword_set = keyword_set or get_keyword_set()
-    text = normalize_text(f"{title} {annotation or ''}")
+    raw_text = f"{title} {annotation or ''}"
+    text_lemmas = lemmas(raw_text)
 
     matched: list[tuple[str, str]] = []
-    for group_name in STEM_GROUPS:
-        matched.extend(_stem_matches(text, getattr(keyword_set, group_name), group_name))
-    matched.extend(_abbreviation_matches(text, keyword_set.abbreviations))
+    for group_name in WORD_GROUPS:
+        matched.extend((w, group_name) for w in getattr(keyword_set, group_name) if phrase_in(text_lemmas, w))
+    matched.extend(_abbreviation_matches(normalize_text(raw_text), keyword_set.abbreviations))
 
-    industry_words, industry_groups = _industry_matches(text, keyword_set.industries)
-    matched.extend(industry_words)
+    industry_groups = []
+    for group in keyword_set.industries:
+        hits = [w for w in group.words if phrase_in(text_lemmas, w)]
+        if hits:
+            matched.extend((w, "industries") for w in hits)
+            industry_groups.append(group)
 
     groups_found = {group for _, group in matched}
-    has_exclusion = "exclusions" in groups_found
-    has_change_or_stage = bool({"changes", "stages"} & groups_found)
-    has_context = bool({"acts_and_bodies", "topics", "industries"} & groups_found)
-
-    passed = has_change_or_stage and has_context and not has_exclusion
+    passed = (
+        bool({"changes", "stages"} & groups_found)
+        and bool({"acts_and_bodies", "topics", "industries"} & groups_found)
+        and "exclusions" not in groups_found
+    )
     return MatchResult(passed=passed, matched=matched, industries=industry_groups)

@@ -6,16 +6,11 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from dateutil import parser as dateutil_parser
-
 from models import AmendmentType, Level
 from pipeline.keywords_engine import IndustryGroup, KeywordSet
 from pipeline.normalize import normalize_text
 
 _LEVEL_BY_WORD = {
-    "решение совета еэк": Level.EAEU,
-    "решение коллегии еэк": Level.EAEU,
-    "технический регламент": Level.EAEU,
     "федеральный закон": Level.FEDERAL_LAW,
     "законопроект": Level.FEDERAL_LAW,
     "указ президента": Level.UKAZ,
@@ -27,7 +22,7 @@ _LEVEL_BY_WORD = {
 _STAGE_BY_WORD = {
     "проект постановления": "проект",
     "общественное обсуждение": "проект",
-    "внесен в госдум": "внесен",
+    "внесен в госдуму": "внесен",
     "первое чтение": "принят в чтении",
     "второе чтение": "принят в чтении",
     "третье чтение": "принят в чтении",
@@ -35,19 +30,25 @@ _STAGE_BY_WORD = {
     "совет федерации одобрил": "принят в чтении",
     "подписал закон": "подписан",
     "опубликован": "опубликован",
-    "вступает в сил": "вступает в силу",
-    "вступил в сил": "вступил в силу",
+    "вступает в силу": "вступает в силу",
+    "вступил в силу": "вступил в силу",
     "утратил силу": "утратил силу",
 }
 
 _AMENDMENT_BY_WORD = {
-    "ставк": AmendmentType.RATE_CHANGE,
+    "ставка": AmendmentType.RATE_CHANGE,
     "перечень": AmendmentType.LIST_CHANGE,
     "обязан": AmendmentType.NEW_OBLIGATION,
+    "обязанность": AmendmentType.NEW_OBLIGATION,
 }
 
-_ACT_NUMBER_RE = re.compile(r"№\s*([0-9０-９]+[-\w]*)")
-_ACT_DATE_RE = re.compile(r"\bот\s+(\d{1,2}[.\s]\d{1,2}[.\s]\d{2,4}|\d{1,2}\s+\w+\s+\d{4}\s*г\.?)", re.IGNORECASE)
+_ACT_NUMBER_RE = re.compile(r"№\s*(\d+(?:-[\w]+)?)|(?<![\w-])(\d{1,4}-(?:ФКЗ|ФЗ|рп))(?!\w)", re.IGNORECASE)
+_MONTHS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+_ACT_DATE_NUMERIC_RE = re.compile(r"\bот\s+(\d{1,2})\.(\d{1,2})\.(\d{4})")
+_ACT_DATE_WORDS_RE = re.compile(r"\bот\s+(\d{1,2})\s+(" + "|".join(_MONTHS) + r")\s+(\d{4})", re.IGNORECASE)
 
 
 def classify_level(matched: list[tuple[str, str]]) -> Level | None:
@@ -96,17 +97,25 @@ def classify_industry(matched: list[tuple[str, str]], keyword_set: KeywordSet) -
     return matched_groups[0].label, codes
 
 
+def _safe_date(year: str, month: int, day: str) -> date | None:
+    try:
+        return date(int(year), month, int(day))
+    except ValueError:
+        return None
+
+
 def extract_act_requisites(text: str) -> tuple[str | None, date | None]:
     number_match = _ACT_NUMBER_RE.search(text)
-    number = number_match.group(1) if number_match else None
+    number = (number_match.group(1) or number_match.group(2)) if number_match else None
 
-    date_match = _ACT_DATE_RE.search(text)
     act_date = None
-    if date_match:
-        try:
-            act_date = dateutil_parser.parse(date_match.group(1), dayfirst=True).date()
-        except (ValueError, OverflowError):
-            act_date = None
+    numeric = _ACT_DATE_NUMERIC_RE.search(text)
+    if numeric:
+        act_date = _safe_date(numeric.group(3), int(numeric.group(2)), numeric.group(1))
+    else:
+        words = _ACT_DATE_WORDS_RE.search(text)
+        if words:
+            act_date = _safe_date(words.group(3), _MONTHS[words.group(2).lower()], words.group(1))
 
     return number, act_date
 
