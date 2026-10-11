@@ -3,5 +3,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/registry.sqlite3
-data/smoke_test_registry.sqlite3
 data/exports/
+logs/

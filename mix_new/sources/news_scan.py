@@ -1,97 +1,158 @@
-"""Сканер RSS-лент новостных СМИ как источник СИГНАЛОВ (не истины).
-
-Каждая найденная новость — это только наводка (NewsLead): заголовок, ссылка
-на новость, дата. Сама новость никогда не становится карточкой акта —
-только проверка на первоисточнике (см. news_check.verify_lead) может
-превратить наводку либо в обычную карточку (со статусом из первоисточника),
-либо в карточку со статусом "не подтверждено"."""
+"""Сканер RSS-лент новостных СМИ — источник СИГНАЛОВ, не истины (см.
+tz_news_parser.md). Каждая новость проходит через keywords_engine.match;
+подтверждение остаётся за человеком (ручная сверка)."""
 from __future__ import annotations
 
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date, datetime
+from urllib import robotparser
 
 import requests
 from dateutil import parser as dateutil_parser
 
-from config import HTTP_TIMEOUT, HTTP_USER_AGENT, NEWS_RELEVANCE_KEYWORDS, REQUEST_DELAY_SECONDS, RSS_FEEDS
+from config import HTTP_RETRY_COUNT, HTTP_TIMEOUT, HTTP_USER_AGENT, REQUEST_DELAY_SECONDS
+from pipeline import keywords_engine
+from pipeline.normalize import to_moscow_tz
+from sources.sources_config import NewsSource, load_sources
+from journal.request_log import RequestLogger
 
 
 @dataclass
 class NewsLead:
     title: str
     link: str
-    published: date | None
-    feed_name: str
+    annotation: str
+    published: datetime | None
+    source_name: str
+    trust_tier: str
+    matched_keywords: list[tuple[str, str]]
 
 
 class FeedUnavailableError(Exception):
     pass
 
 
-def scan_all_feeds(since: date, until: date, feeds: dict[str, str] | None = None) -> tuple[list[NewsLead], dict[str, str]]:
-    """Возвращает (найденные наводки, {имя_ленты: причина ошибки} для недоступных лент).
+_robots_cache: dict[str, robotparser.RobotFileParser] = {}
 
-    Никогда не бросает исключение наружу за одну ленту — недоступность одной
-    ленты не должна останавливать сканирование остальных; ошибки собираются
-    и возвращаются журналу вызывающей стороной."""
-    feeds = feeds or RSS_FEEDS
+
+def _robots_allowed(feed_url: str, user_agent: str) -> bool:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(feed_url)
+    base = f"{parts.scheme}://{parts.netloc}"
+    rp = _robots_cache.get(base)
+    if rp is None:
+        rp = robotparser.RobotFileParser()
+        rp.set_url(base + "/robots.txt")
+        try:
+            rp.read()
+        except OSError:
+            # robots.txt недоступен — не блокируем сбор из-за этого.
+            rp = None
+        _robots_cache[base] = rp
+    if rp is None:
+        return True
+    return rp.can_fetch(user_agent, feed_url)
+
+
+def scan_all_feeds(
+    since: date,
+    until: date,
+    sources: list[NewsSource] | None = None,
+    request_logger: RequestLogger | None = None,
+) -> tuple[list[NewsLead], dict[str, str], int]:
+    """Возвращает (найденные наводки, {имя_источника: причина ошибки},
+    сколько новостей всего прочитано до фильтрации по ключевым словам).
+
+    Недоступность одного источника не останавливает сканирование
+    остальных — ошибки собираются и возвращаются журналу вызывающей
+    стороной, не подменяются новостями из других лент."""
+    sources = sources or load_sources()
+    request_logger = request_logger or RequestLogger()
     leads: list[NewsLead] = []
     errors: dict[str, str] = {}
+    read_count = 0
     session = requests.Session()
     session.headers.update({"User-Agent": HTTP_USER_AGENT})
 
-    for feed_name, url in feeds.items():
-        try:
-            items = _fetch_feed(session, feed_name, url)
-        except FeedUnavailableError as exc:
-            errors[feed_name] = str(exc)
+    for source in sources:
+        if not _robots_allowed(source.feed_url, HTTP_USER_AGENT):
+            errors[source.name] = "запрещено robots.txt"
             continue
-        for title, link, pub_raw in items:
+        try:
+            items = _fetch_feed(session, source, request_logger)
+        except FeedUnavailableError as exc:
+            errors[source.name] = str(exc)
+            continue
+
+        for title, link, annotation, pub_raw in items:
             published = _try_parse_date(pub_raw)
-            if published is not None and not (since <= published <= until):
+            if published is not None:
+                published_date = to_moscow_tz(published).date()
+                if not (since <= published_date <= until):
+                    continue
+            read_count += 1
+            result = keywords_engine.match(title, annotation)
+            if not result.passed:
                 continue
-            if not _is_relevant(title):
-                continue
-            leads.append(NewsLead(title=title.strip(), link=link.strip(), published=published, feed_name=feed_name))
+            leads.append(
+                NewsLead(
+                    title=title.strip(),
+                    link=link.strip(),
+                    annotation=annotation.strip(),
+                    published=to_moscow_tz(published) if published else None,
+                    source_name=source.name,
+                    trust_tier=source.trust_tier,
+                    matched_keywords=result.matched,
+                )
+            )
         time.sleep(REQUEST_DELAY_SECONDS)
 
-    return leads, errors
+    return leads, errors, read_count
 
 
-def _fetch_feed(session: requests.Session, feed_name: str, url: str) -> list[tuple[str, str, str | None]]:
-    try:
-        resp = session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=True)
-        resp.raise_for_status()
-    except requests.exceptions.RequestException as exc:
-        raise FeedUnavailableError(f"{feed_name}: сетевая ошибка — {exc}") from exc
+def _fetch_feed(
+    session: requests.Session, source: NewsSource, request_logger: RequestLogger
+) -> list[tuple[str, str, str, str | None]]:
+    last_exc: Exception | None = None
+    for attempt in range(HTTP_RETRY_COUNT + 1):
+        try:
+            resp = session.get(source.feed_url, timeout=HTTP_TIMEOUT, allow_redirects=True)
+            request_logger.log(source.feed_url, resp.status_code)
+            resp.raise_for_status()
+            return _parse_rss(resp.content)
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            request_logger.log(source.feed_url, "ERROR", str(exc))
+            continue
+        except ET.ParseError as exc:
+            request_logger.log(source.feed_url, "PARSE_ERROR", str(exc))
+            raise FeedUnavailableError(f"{source.name}: не удалось разобрать RSS/XML — {exc}") from exc
 
-    try:
-        root = ET.fromstring(resp.content)
-    except ET.ParseError as exc:
-        raise FeedUnavailableError(f"{feed_name}: не удалось разобрать RSS/XML — {exc}") from exc
+    raise FeedUnavailableError(f"{source.name}: сетевая ошибка — {last_exc}")
 
+
+def _parse_rss(content: bytes) -> list[tuple[str, str, str, str | None]]:
+    root = ET.fromstring(content)
     items = []
     for item in root.iter("item"):
         title_el = item.find("title")
         link_el = item.find("link")
         pub_el = item.find("pubDate")
+        desc_el = item.find("description")
         if title_el is None or link_el is None:
             continue
-        items.append((title_el.text or "", link_el.text or "", pub_el.text if pub_el is not None else None))
+        annotation = (desc_el.text or "") if desc_el is not None else ""
+        items.append((title_el.text or "", link_el.text or "", annotation, pub_el.text if pub_el is not None else None))
     return items
 
 
-def _try_parse_date(raw: str | None) -> date | None:
+def _try_parse_date(raw: str | None) -> datetime | None:
     if not raw:
         return None
     try:
-        return dateutil_parser.parse(raw).date()
+        return dateutil_parser.parse(raw)
     except (ValueError, OverflowError):
         return None
-
-
-def _is_relevant(title: str) -> bool:
-    lowered = title.lower()
-    return any(keyword in lowered for keyword in NEWS_RELEVANCE_KEYWORDS)

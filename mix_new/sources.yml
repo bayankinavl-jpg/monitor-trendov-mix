@@ -1,0 +1,91 @@
+# Источники RSS для сканера новостей (см. tz_news_parser.md).
+# Правка этого файла действует со следующего запуска, без изменения кода.
+#
+# trust_tier влияет на оценку достоверности (pipeline/credibility.py):
+#   official_publication — официальное опубликование федеральных законов
+#                           (и для РГ — постановлений Правительства)
+#   legal                — правовые системы (Гарант, КонсультантПлюс)
+#   general               — остальные СМИ
+
+sources:
+  - name: tass
+    focus: Общие новости
+    feed_url: https://tass.ru/rss/v2.xml
+    trust_tier: general
+
+  - name: interfax
+    focus: Общие новости
+    feed_url: https://www.interfax.ru/rss.asp
+    trust_tier: general
+
+  - name: kommersant
+    focus: Общие новости
+    feed_url: https://www.kommersant.ru/RSS/news.xml
+    trust_tier: general
+
+  - name: vedomosti
+    focus: Общие новости
+    feed_url: https://www.vedomosti.ru/rss/news
+    trust_tier: general
+
+  - name: rbc
+    focus: Общие новости
+    feed_url: https://www.rbc.ru/rbcfreenews/rss.xml
+    trust_tier: general
+
+  - name: garant
+    focus: Правовые новости
+    feed_url: https://www.garant.ru/rss/news.rss
+    trust_tier: legal
+
+  - name: consultant
+    focus: Правовые новости
+    feed_url: https://www.consultant.ru/rss/fed.xml
+    trust_tier: legal
+
+  # Адрес ленты уточнить на первом запуске. Если лента не найдена или
+  # недоступна — источник помечается в журнале, запуск не падает.
+  - name: rossiyskaya_gazeta_dokumenty
+    focus: Официальная публикация федеральных законов и постановлений Правительства
+    feed_url: https://www.rg.ru/tema/documenty/feed.xml
+    trust_tier: official_publication
+
+  - name: parlamentskaya_gazeta
+    focus: Законопроекты, официальная публикация федеральных законов
+    feed_url: https://www.pnp.ru/rss/
+    trust_tier: official_publication
+
+  - name: klerk
+    focus: Налоги, взносы, отчётность
+    feed_url: https://www.klerk.ru/rss/
+    trust_tier: general
+
+  - name: milknews
+    focus: Молочная и пищевая промышленность
+    feed_url: https://milknews.ru/rss.xml
+    trust_tier: general
+
+  - name: dairynews
+    focus: Молочная и пищевая промышленность
+    feed_url: https://dairynews.today/rss/
+    trust_tier: general
+
+  - name: cnews
+    focus: Электроника и ИТ
+    feed_url: https://www.cnews.ru/inc/rss/news.xml
+    trust_tier: general
+
+  - name: agroinvestor
+    focus: Сельское хозяйство
+    feed_url: https://www.agroinvestor.ru/rss/
+    trust_tier: general
+
+  - name: retail_ru
+    focus: Ритейл
+    feed_url: https://www.retail.ru/rss/
+    trust_tier: general
+
+  - name: prometall
+    focus: Металлы
+    feed_url: https://prometall.info/rss/
+    trust_tier: general

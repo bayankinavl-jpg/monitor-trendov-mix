@@ -1,12 +1,23 @@
 """Доступ к SQLite-реестру: схема, upsert карточек, журнал запусков."""
 from __future__ import annotations
 
+import difflib
 import json
 import sqlite3
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from models import Act, AmendmentType, Level, Stage, Status
+from models import (
+    Act,
+    AmendmentType,
+    Credibility,
+    Level,
+    ManualCheckStatus,
+    NewsItem,
+    RecordStatus,
+    Stage,
+    Status,
+)
 
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
@@ -199,6 +210,19 @@ def find_candidates_for_fuzzy_match(conn: sqlite3.Connection, level: Level, act_
     return [_row_to_act(conn, r) for r in rows]
 
 
+def find_act_by_number_and_date(conn: sqlite3.Connection, number: str, act_date: date) -> Act | None:
+    """Для «Связи с реестром» (шаг 7 ТЗ): ищет акт по номеру и дате
+    (принятия либо опубликования), без привязки к уровню/ведомству —
+    у новости их может не быть."""
+    row = conn.execute(
+        "SELECT * FROM acts WHERE number = ? AND (adoption_date = ? OR publication_date = ?) LIMIT 1",
+        (number, act_date.isoformat(), act_date.isoformat()),
+    ).fetchone()
+    if row is None:
+        return None
+    return _row_to_act(conn, row)
+
+
 def write_journal_entry(
     conn: sqlite3.Connection,
     run_id: str,
@@ -227,3 +251,134 @@ def write_journal_entry(
 
 def get_journal_for_run(conn: sqlite3.Connection, run_id: str) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM run_journal WHERE run_id = ?", (run_id,)).fetchall()
+
+
+# --- Реестр новостей (news_items) ------------------------------------------------
+
+_FUZZY_TITLE_THRESHOLD = 0.6
+
+
+def _row_to_news_item(row: sqlite3.Row) -> NewsItem:
+    return NewsItem(
+        title=row["title"],
+        links=json.loads(row["links_json"]),
+        published_at=datetime.fromisoformat(row["published_at"]),
+        sources=json.loads(row["sources_json"]),
+        matched_keywords=[tuple(x) for x in json.loads(row["matched_keywords_json"])],
+        amendment_type=AmendmentType(row["amendment_type"]) if row["amendment_type"] else None,
+        level=Level(row["level"]) if row["level"] else None,
+        stage=row["stage"],
+        topic=row["topic"],
+        industry=row["industry"],
+        okved_codes=json.loads(row["okved_codes_json"] or "[]"),
+        act_number=row["act_number"],
+        act_date=_parse_date(row["act_date"]),
+        credibility=Credibility(row["credibility"]),
+        record_status=RecordStatus(row["record_status"]),
+        manual_check_status=ManualCheckStatus(row["manual_check_status"]),
+        act_text_url=row["act_text_url"],
+        first_seen_date=_parse_date(row["first_seen_date"]) or date.today(),
+        related_act_id=row["related_act_id"],
+        db_id=row["id"],
+        natural_key=row["natural_key"],
+    )
+
+
+def _find_existing_news_item(conn: sqlite3.Connection, item: NewsItem) -> sqlite3.Row | None:
+    """Ищет уже накопленную запись по пересечению ссылок, иначе — по
+    похожему заголовку (fuzzy), чтобы одна и та же новость с чуть другим
+    набором ссылок между запусками не плодила дубль."""
+    rows = conn.execute("SELECT * FROM news_items").fetchall()
+    item_links = set(item.links)
+
+    for row in rows:
+        if item_links & set(json.loads(row["links_json"])):
+            return row
+
+    for row in rows:
+        score = difflib.SequenceMatcher(None, row["title"].lower(), item.title.lower()).ratio()
+        if score >= _FUZZY_TITLE_THRESHOLD:
+            return row
+
+    return None
+
+
+def upsert_news_item(conn: sqlite3.Connection, item: NewsItem) -> tuple[int, RecordStatus]:
+    """Накопление записи (шаг 8 ТЗ). Поля manual_check_status и
+    act_text_url при повторном запуске НЕ перезатираются — они
+    заполняются только человеком. record_status выставляется по
+    правилу: новой записи не было — «новая», появился новый независимый
+    источник — «обновлена», иначе — «повтор»."""
+    now = datetime.now(timezone.utc).isoformat()
+    existing = _find_existing_news_item(conn, item)
+
+    natural_key = item.natural_key or sorted(item.links)[0]
+    merged_links = sorted(set(item.links) | (set(json.loads(existing["links_json"])) if existing else set()))
+    merged_sources = sorted(set(item.sources) | (set(json.loads(existing["sources_json"])) if existing else set()))
+
+    if existing is None:
+        record_status = RecordStatus.NEW
+        manual_check_status = ManualCheckStatus.NOT_CHECKED
+        act_text_url = None
+        first_seen_date = item.first_seen_date
+    else:
+        gained_source = bool(set(merged_sources) - set(json.loads(existing["sources_json"])))
+        record_status = RecordStatus.UPDATED if gained_source else RecordStatus.REPEAT
+        manual_check_status = ManualCheckStatus(existing["manual_check_status"])
+        act_text_url = existing["act_text_url"]
+        first_seen_date = _parse_date(existing["first_seen_date"]) or item.first_seen_date
+
+    params = (
+        item.title,
+        json.dumps(merged_links, ensure_ascii=False),
+        natural_key,
+        item.published_at.isoformat(),
+        json.dumps(merged_sources, ensure_ascii=False),
+        json.dumps(item.matched_keywords, ensure_ascii=False),
+        item.amendment_type.value if item.amendment_type else None,
+        item.level.value if item.level else None,
+        item.stage,
+        item.topic,
+        item.industry,
+        json.dumps(item.okved_codes, ensure_ascii=False),
+        item.act_number,
+        _iso(item.act_date),
+        item.credibility.value,
+        record_status.value,
+        manual_check_status.value,
+        act_text_url,
+        _iso(first_seen_date),
+        item.related_act_id,
+    )
+
+    if existing is None:
+        cur = conn.execute(
+            """INSERT INTO news_items (
+                title, links_json, natural_key, published_at, sources_json,
+                matched_keywords_json, amendment_type, level, stage, topic, industry,
+                okved_codes_json, act_number, act_date, credibility, record_status,
+                manual_check_status, act_text_url, first_seen_date, related_act_id,
+                created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            params + (now, now),
+        )
+        conn.commit()
+        return cur.lastrowid, RecordStatus.NEW
+
+    conn.execute(
+        """UPDATE news_items SET
+            title=?, links_json=?, natural_key=?, published_at=?, sources_json=?,
+            matched_keywords_json=?, amendment_type=?, level=?, stage=?, topic=?, industry=?,
+            okved_codes_json=?, act_number=?, act_date=?, credibility=?, record_status=?,
+            manual_check_status=?, act_text_url=?, first_seen_date=?, related_act_id=?,
+            updated_at=?
+        WHERE id=?""",
+        params + (now, existing["id"]),
+    )
+    conn.commit()
+    return existing["id"], record_status
+
+
+def list_news_items(conn: sqlite3.Connection) -> list[NewsItem]:
+    rows = conn.execute("SELECT * FROM news_items ORDER BY published_at DESC").fetchall()
+    return [_row_to_news_item(r) for r in rows]

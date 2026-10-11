@@ -58,3 +58,32 @@ CREATE TABLE IF NOT EXISTS run_journal (
 
 CREATE INDEX IF NOT EXISTS idx_acts_status ON acts(status);
 CREATE INDEX IF NOT EXISTS idx_journal_run ON run_journal(run_id);
+
+CREATE TABLE IF NOT EXISTS news_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    links_json TEXT NOT NULL,
+    natural_key TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    sources_json TEXT NOT NULL,
+    matched_keywords_json TEXT NOT NULL,
+    amendment_type TEXT,
+    level TEXT,
+    stage TEXT,
+    topic TEXT,
+    industry TEXT,
+    okved_codes_json TEXT,
+    act_number TEXT,
+    act_date TEXT,
+    credibility TEXT NOT NULL,
+    record_status TEXT NOT NULL,
+    manual_check_status TEXT NOT NULL DEFAULT 'не проверено',
+    act_text_url TEXT,
+    first_seen_date TEXT NOT NULL,
+    related_act_id INTEGER REFERENCES acts(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(natural_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_credibility ON news_items(credibility);
