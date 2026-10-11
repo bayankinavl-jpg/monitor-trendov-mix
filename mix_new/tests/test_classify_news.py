@@ -113,3 +113,9 @@ def test_extract_act_requisites_keeps_number_suffix():
 
 def test_latin_n_before_word_is_not_a_number():
     assert extract_act_requisites("Чай N Greenfield запрещён")[0] is None
+
+
+def test_consultant_letter_number_after_latin_n():
+    number, act_date = extract_act_requisites('<Письмо> ФНС России от 29.09.2026 N ЕА-36-15/8583@ "О порядке заполнения"')
+    assert number == "ЕА-36-15/8583@"
+    assert act_date == date(2026, 9, 29)
