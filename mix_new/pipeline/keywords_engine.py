@@ -49,7 +49,7 @@ class MatchResult:
 def load_keywords(path: Path = KEYWORDS_PATH) -> KeywordSet:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     industries = [
-        IndustryGroup(label=entry["words"][0], words=entry["words"], okved=entry["okved"])
+        IndustryGroup(label=entry.get("label", entry["words"][0]), words=entry["words"], okved=entry["okved"])
         for entry in raw.get("industries", [])
     ]
     return KeywordSet(
