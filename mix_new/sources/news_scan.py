@@ -34,6 +34,10 @@ class FeedUnavailableError(Exception):
     pass
 
 
+class NotRssError(ValueError):
+    """Ответ сайта разобран, но это не RSS-лента (например, HTML-страница)."""
+
+
 _robots_cache: dict[str, robotparser.RobotFileParser] = {}
 
 
@@ -127,6 +131,9 @@ def _fetch_feed(
             last_exc = exc
             request_logger.log(source.feed_url, "ERROR", str(exc))
             continue
+        except NotRssError as exc:
+            request_logger.log(source.feed_url, "NOT_RSS", str(exc))
+            raise FeedUnavailableError(f"{source.name}: ответ не RSS — {exc}") from exc
         except ET.ParseError as exc:
             request_logger.log(source.feed_url, "PARSE_ERROR", str(exc))
             raise FeedUnavailableError(f"{source.name}: не удалось разобрать RSS/XML — {exc}") from exc
@@ -135,7 +142,14 @@ def _fetch_feed(
 
 
 def _parse_rss(content: bytes) -> list[tuple[str, str, str, str | None]]:
+    # HTML-страница может оказаться корректным XML и разобраться без ошибки,
+    # тогда источник молча дал бы 0 записей. Поэтому проверяем явно.
+    head = content.lstrip(b"\xef\xbb\xbf \t\r\n")[:100].lower()
+    if head.startswith((b"<!doctype html", b"<html")):
+        raise NotRssError("сайт вернул HTML-страницу вместо RSS-ленты")
     root = ET.fromstring(content)
+    if root.tag != "rss":
+        raise NotRssError(f"корневой элемент <{root.tag}>, а не <rss>")
     items = []
     for item in root.iter("item"):
         title_el = item.find("title")

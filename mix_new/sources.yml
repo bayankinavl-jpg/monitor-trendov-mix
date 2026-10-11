@@ -10,18 +10,38 @@
 #   general               — остальные СМИ
 
 sources:
-  # Портал официального опубликования. Каждая лента — 200 последних актов,
-  # лента министерств и служб покрывает около 10 дней: запускать не реже
-  # раза в неделю. Ленту Конституционного Суда не подключаем (судебная
-  # практика вне охвата ТЗ).
-  - name: pravo_gov
-    focus: Официальное опубликование
-    feed_url: http://publication.pravo.gov.ru/rss
+  # Портал официального опубликования. Адрес ленты:
+  # http://publication.pravo.gov.ru/api/rss?block=<раздел>&pageSize=200
+  # (адрес /rss — HTML-страница, не лента). Каждая лента — 200 последних
+  # актов; лента министерств и служб покрывает около 10 дней, поэтому
+  # запускать не реже раза в неделю. Ленту Конституционного Суда не
+  # подключаем (судебная практика вне охвата ТЗ).
+  - name: pravo_government
+    focus: Акты Правительства
+    feed_url: http://publication.pravo.gov.ru/api/rss?block=government&pageSize=200
     trust_tier: primary_source
 
-  # Сюда добавить ленты портала по органам, когда будут известны адреса:
-  # Президент и федеральные законы, Правительство, министерства и службы,
-  # Совет Федерации, Государственная Дума. Формат — как у pravo_gov выше.
+  - name: pravo_president
+    focus: Акты Президента и федеральные законы
+    feed_url: http://publication.pravo.gov.ru/api/rss?block=president&pageSize=200
+    trust_tier: primary_source
+
+  - name: pravo_federal_authorities
+    focus: Акты министерств и служб
+    feed_url: http://publication.pravo.gov.ru/api/rss?block=federal_authorities&pageSize=200
+    trust_tier: primary_source
+
+  # council_1 — Совет Федерации, council_2 — Государственная Дума
+  # (проверено 11.10.2026). pageSize меньше 10 портал не принимает.
+  - name: pravo_federation_council
+    focus: Постановления Совета Федерации
+    feed_url: http://publication.pravo.gov.ru/api/rss?block=council_1&pageSize=200
+    trust_tier: primary_source
+
+  - name: pravo_state_duma
+    focus: Постановления Государственной Думы
+    feed_url: http://publication.pravo.gov.ru/api/rss?block=council_2&pageSize=200
+    trust_tier: primary_source
 
   - name: tass
     focus: Общие новости
