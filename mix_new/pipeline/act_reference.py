@@ -31,7 +31,7 @@ _NUMBER_IN_ALIAS_RE = re.compile(r"№\s*(\d+(?:-[а-яa-z]+)?)", re.IGNORECASE)
 _DATE_IN_ALIAS_RE = re.compile(r"от (\d{2})\.(\d{2})\.(\d{4})")
 _QUOTED_RE = re.compile(r"[«\"„]([^«»\"„“]{4,}?)[»\"“]")
 _NUMBER_IN_TEXT_RE = re.compile(
-    r"№\s*(\d+(?:-(?:ФКЗ|ФЗ|рп))?)|(?<![\w-])(\d{1,4}-(?:ФКЗ|ФЗ|рп))(?!\w)", re.IGNORECASE
+    r"(?:№|(?<!\w)N)\s*(\d+(?:-(?:ФКЗ|ФЗ|рп))?)|(?<![\w-])(\d{1,4}-(?:ФКЗ|ФЗ|рп))(?!\w)"
 )
 
 

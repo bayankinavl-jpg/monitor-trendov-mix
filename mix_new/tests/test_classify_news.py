@@ -73,6 +73,18 @@ def test_extract_act_requisites_federal_law_without_number_sign():
     assert act_date == date(2009, 12, 28)
 
 
+def test_extract_act_requisites_consultant_style():
+    number, act_date = extract_act_requisites('Постановление Правительства РФ от 09.10.2026 N 1327 "О внесении изменений"')
+    assert number == "1327"
+    assert act_date == date(2026, 10, 9)
+
+
+def test_extract_act_requisites_garant_style():
+    number, act_date = extract_act_requisites("Приказ Минтранса России от 14 августа 2026 г. № 363")
+    assert number == "363"
+    assert act_date == date(2026, 8, 14)
+
+
 def test_extract_act_requisites_invalid_date_ignored():
     number, act_date = extract_act_requisites("Приказ № 5 от 31.02.2026")
     assert number == "5"

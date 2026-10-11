@@ -33,18 +33,25 @@ sources:
     feed_url: https://www.rbc.ru/rbcfreenews/rss.xml
     trust_tier: general
 
-  - name: garant
+  # Ленты правовых систем отдают только последние документы (Гарант — 10,
+  # КонсультантПлюс — 50), поэтому полный охват даёт ежедневный запуск.
+  - name: garant_federal
+    focus: Новые федеральные акты с номером и датой
+    feed_url: https://rss.garant.ru/hotlaw/federal/
+    trust_tier: legal
+
+  - name: garant_news
     focus: Правовые новости
-    feed_url: https://www.garant.ru/rss/news.rss
+    feed_url: https://rss.garant.ru/categories/news/
     trust_tier: legal
 
   - name: consultant
-    focus: Правовые новости
-    feed_url: https://www.consultant.ru/rss/fed.xml
+    focus: Новые федеральные документы с номером и датой
+    feed_url: https://www.consultant.ru/rss/hotdocs.xml
     trust_tier: legal
 
-  # Адрес ленты уточнить на первом запуске. Если лента не найдена или
-  # недоступна — источник помечается в журнале, запуск не падает.
+  # robots.txt запрещает сбор (проверено 11.10.2026). Источник остаётся
+  # в списке, чтобы запрет был виден в журнале каждого запуска.
   - name: rossiyskaya_gazeta_dokumenty
     focus: Официальная публикация федеральных законов и постановлений Правительства
     feed_url: https://www.rg.ru/tema/documenty/feed.xml
@@ -57,12 +64,14 @@ sources:
 
   - name: klerk
     focus: Налоги, взносы, отчётность
-    feed_url: https://www.klerk.ru/rss/
+    feed_url: https://www.klerk.ru/xml/index.xml
     trust_tier: general
 
+  # Лента отвечает «доступ запрещён» (HTTP 403), проверено 11.10.2026.
+  # Обходить запрет не нужно; если издание откроет ленту, она заработает.
   - name: milknews
     focus: Молочная и пищевая промышленность
-    feed_url: https://milknews.ru/rss.xml
+    feed_url: https://milknews.ru/rss/
     trust_tier: general
 
   - name: dairynews
