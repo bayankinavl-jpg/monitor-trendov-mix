@@ -107,7 +107,10 @@ class NewsItem:
     act_number: str | None = None
     act_date: date | None = None
 
+    referenced_acts: list[str] = field(default_factory=list)
+
     credibility: Credibility = Credibility.LOW
+    credibility_reasons: list[str] = field(default_factory=list)
     record_status: RecordStatus = RecordStatus.NEW
     manual_check_status: ManualCheckStatus = ManualCheckStatus.NOT_CHECKED
     act_text_url: str | None = None

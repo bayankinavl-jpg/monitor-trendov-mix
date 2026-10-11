@@ -7,6 +7,7 @@ import re
 from datetime import date
 
 from models import AmendmentType, Level
+from pipeline.act_reference import find_referenced_acts
 from pipeline.keywords_engine import IndustryGroup, KeywordSet
 from pipeline.normalize import normalize_text
 
@@ -122,8 +123,10 @@ def extract_act_requisites(text: str) -> tuple[str | None, date | None]:
 
 def classify(title: str, annotation: str, matched: list[tuple[str, str]], keyword_set: KeywordSet) -> dict:
     """Собирает все классификационные поля сразу — удобно для сборки NewsItem."""
-    number, act_date = extract_act_requisites(f"{title} {annotation}")
+    text = f"{title} {annotation}"
+    number, act_date = extract_act_requisites(text)
     industry, okved_codes = classify_industry(matched, keyword_set)
+    referenced_acts = [act.name for act in find_referenced_acts(text, act_date)]
     return {
         "amendment_type": classify_amendment_type(matched),
         "level": classify_level(matched),
@@ -133,4 +136,5 @@ def classify(title: str, annotation: str, matched: list[tuple[str, str]], keywor
         "okved_codes": okved_codes,
         "act_number": number,
         "act_date": act_date,
+        "referenced_acts": referenced_acts,
     }

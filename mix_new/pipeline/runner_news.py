@@ -63,7 +63,14 @@ def run(conn: sqlite3.Connection, since: date, until: date, sources: list[NewsSo
         fields = classify(cluster.title, annotation, matched, keyword_set)
         trust_tiers = [lead.trust_tier for lead in cluster.leads]
         src_count = independent_source_count(cluster)
-        credibility = assess_credibility(trust_tiers, fields["act_number"], fields["act_date"], src_count)
+        credibility, credibility_reasons = assess_credibility(
+            trust_tiers,
+            fields["act_number"],
+            fields["act_date"],
+            src_count,
+            stage=fields["stage"],
+            referenced_acts=fields["referenced_acts"],
+        )
         related_act_id = find_related_act_id(conn, fields["act_number"], fields["act_date"])
 
         published_candidates = [lead.published for lead in cluster.leads if lead.published]
@@ -76,6 +83,7 @@ def run(conn: sqlite3.Connection, since: date, until: date, sources: list[NewsSo
             sources=cluster.canonical_sources,
             matched_keywords=matched,
             credibility=credibility,
+            credibility_reasons=credibility_reasons,
             related_act_id=related_act_id,
             first_seen_date=date.today(),
             **fields,

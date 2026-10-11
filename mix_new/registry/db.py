@@ -31,8 +31,20 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+# Колонки, добавленные после первой версии таблицы news_items. CREATE TABLE
+# IF NOT EXISTS не меняет уже созданную таблицу, поэтому добавляем их явно.
+_NEWS_ITEMS_ADDED_COLUMNS = {
+    "referenced_acts_json": "TEXT",
+    "credibility_reasons_json": "TEXT",
+}
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(news_items)")}
+    for column, sql_type in _NEWS_ITEMS_ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE news_items ADD COLUMN {column} {sql_type}")
     conn.commit()
 
 
@@ -273,7 +285,9 @@ def _row_to_news_item(row: sqlite3.Row) -> NewsItem:
         okved_codes=json.loads(row["okved_codes_json"] or "[]"),
         act_number=row["act_number"],
         act_date=_parse_date(row["act_date"]),
+        referenced_acts=json.loads(row["referenced_acts_json"] or "[]"),
         credibility=Credibility(row["credibility"]),
+        credibility_reasons=json.loads(row["credibility_reasons_json"] or "[]"),
         record_status=RecordStatus(row["record_status"]),
         manual_check_status=ManualCheckStatus(row["manual_check_status"]),
         act_text_url=row["act_text_url"],
@@ -349,6 +363,8 @@ def upsert_news_item(conn: sqlite3.Connection, item: NewsItem) -> tuple[int, Rec
         act_text_url,
         _iso(first_seen_date),
         item.related_act_id,
+        json.dumps(item.referenced_acts, ensure_ascii=False),
+        json.dumps(item.credibility_reasons, ensure_ascii=False),
     )
 
     if existing is None:
@@ -358,8 +374,9 @@ def upsert_news_item(conn: sqlite3.Connection, item: NewsItem) -> tuple[int, Rec
                 matched_keywords_json, amendment_type, level, stage, topic, industry,
                 okved_codes_json, act_number, act_date, credibility, record_status,
                 manual_check_status, act_text_url, first_seen_date, related_act_id,
+                referenced_acts_json, credibility_reasons_json,
                 created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             params + (now, now),
         )
         conn.commit()
@@ -371,6 +388,7 @@ def upsert_news_item(conn: sqlite3.Connection, item: NewsItem) -> tuple[int, Rec
             matched_keywords_json=?, amendment_type=?, level=?, stage=?, topic=?, industry=?,
             okved_codes_json=?, act_number=?, act_date=?, credibility=?, record_status=?,
             manual_check_status=?, act_text_url=?, first_seen_date=?, related_act_id=?,
+            referenced_acts_json=?, credibility_reasons_json=?,
             updated_at=?
         WHERE id=?""",
         params + (now, existing["id"]),

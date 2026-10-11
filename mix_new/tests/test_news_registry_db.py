@@ -61,3 +61,43 @@ def test_merged_links_accumulate_across_runs(conn):
 
     item = list_news_items(conn)[0]
     assert set(item.links) == {"https://example.ru/news/1", "https://example.ru/news/1-mirror"}
+
+
+def test_new_fields_round_trip(conn):
+    upsert_news_item(
+        conn,
+        _item(referenced_acts=["Налоговый кодекс Российской Федерации"], credibility_reasons=["независимых СМИ: 1"]),
+    )
+    item = list_news_items(conn)[0]
+    assert item.referenced_acts == ["Налоговый кодекс Российской Федерации"]
+    assert item.credibility_reasons == ["независимых СМИ: 1"]
+
+
+def test_init_db_adds_new_columns_to_old_table(tmp_path):
+    import sqlite3
+
+    from registry.db import get_connection, init_db
+
+    db_path = tmp_path / "old.sqlite3"
+    old = sqlite3.connect(db_path)
+    old.execute(
+        """CREATE TABLE news_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, links_json TEXT NOT NULL,
+            natural_key TEXT NOT NULL UNIQUE, published_at TEXT NOT NULL, sources_json TEXT NOT NULL,
+            matched_keywords_json TEXT NOT NULL, amendment_type TEXT, level TEXT, stage TEXT, topic TEXT,
+            industry TEXT, okved_codes_json TEXT, act_number TEXT, act_date TEXT,
+            credibility TEXT NOT NULL, record_status TEXT NOT NULL,
+            manual_check_status TEXT NOT NULL DEFAULT 'не проверено', act_text_url TEXT,
+            first_seen_date TEXT NOT NULL, related_act_id INTEGER,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""
+    )
+    old.commit()
+    old.close()
+
+    conn = get_connection(db_path)
+    init_db(conn)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(news_items)")}
+    assert {"referenced_acts_json", "credibility_reasons_json"} <= columns
+    upsert_news_item(conn, _item())
+    assert len(list_news_items(conn)) == 1
+    conn.close()
