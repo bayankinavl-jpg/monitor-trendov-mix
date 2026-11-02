@@ -17,7 +17,18 @@ class NewsSource:
     feed_url: str
     trust_tier: str  # primary_source | official_publication | legal | general
     title: str = ""  # человекочитаемое название для страницы; без него показывается name
-    kind: str = "rss"  # rss | telegram (feed_url = https://t.me/s/<канал>)
+    kind: str = "rss"  # rss | telegram (feed_url = https://t.me/s/<канал>) | hse (лента новостей сайта ВШЭ)
+    category: str = ""  # тип источника для трендов; пусто — определяется по kind и trust_tier
+
+    @property
+    def category_title(self) -> str:
+        if self.category:
+            return self.category
+        if self.kind == "telegram":
+            return "Telegram"
+        if self.trust_tier in ("primary_source", "official_publication", "legal"):
+            return "Официальные и правовые"
+        return "СМИ"
 
     @property
     def domain(self) -> str:

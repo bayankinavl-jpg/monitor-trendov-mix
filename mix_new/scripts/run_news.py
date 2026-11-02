@@ -61,6 +61,8 @@ def main() -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report, encoding="utf-8")
 
+    report_path.write_text(report, encoding="utf-8")
+
     landing_path = build_landing(conn)
 
     print(report)

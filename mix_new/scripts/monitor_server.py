@@ -183,14 +183,14 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Страницу не удалось пересобрать: {exc}")
 
     def do_POST(self) -> None:
-        if self.path != "/run":
-            self._send(404, b"not found", "text/plain")
-            return
         # Запрос с чужой страницы в браузере придёт с другим Origin — отклоняем.
         origin = self.headers.get("Origin")
         host = self.headers.get("Host", "")
         if origin and origin not in (f"http://{host}",):
             self._json(403, {"error": "запуск разрешён только со страницы пульта"})
+            return
+        if self.path != "/run":
+            self._send(404, b"not found", "text/plain")
             return
         try:
             length = int(self.headers.get("Content-Length", 0))

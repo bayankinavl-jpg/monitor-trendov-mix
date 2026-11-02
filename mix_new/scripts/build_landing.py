@@ -12,14 +12,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from pipeline.keywords_engine import load_keywords
-from pipeline.trends import get_trends
+from pipeline.trends import get_trends, group_stories, token_set
 from registry.db import init_db, retag_articles
 from sources.sources_config import load_sources
 
@@ -30,6 +30,8 @@ TREND_DAYS_LIMIT = 365  # статьи старше года на страниц
 # документы, а не рыночные новости: в тренды их не берём, иначе темы
 # вроде «Господдержка» росли бы от каждого постановления о субсидиях.
 TREND_SKIP_TIERS = {"primary_source", "legal"}
+STEEPLE = ["Социальные", "Технологические", "Экономические", "Экологические",
+           "Политические", "Правовые", "Этические"]
 TIER_TITLES = {
     "primary_source": "официальный портал",
     "official_publication": "официальное издание",
@@ -125,46 +127,67 @@ def _outlet(source) -> str:
 
 
 def collect_trends(conn: sqlite3.Connection, sources) -> dict:
-    """Данные вкладки «Тренды»: словарь тем и конкурентов и размеченные статьи.
-    Статусы (растёт, новая...) считаются в браузере под выбранный период."""
+    """Данные вкладки «Тренды»: словарь тем и конкурентов, размеченные статьи,
+    сюжеты (статьи об одном событии склеены) и карточки трендов. Статусы
+    (растёт, новая...) считаются в браузере под выбранный период."""
     trends = get_trends()
     retag_articles(conn, trends)
     by_name = {s.name: s for s in sources}
 
     tags = [{"id": t.id, "label": t.label, "kind": "theme", "group": t.sphere, "self": False,
-             "words": t.words} for t in trends.themes]
+             "words": t.words, "steeple": t.steeple} for t in trends.themes]
     tags += [{"id": c.id, "label": c.label, "kind": "competitor", "group": c.group, "self": c.is_self,
-              "words": c.names} for c in trends.competitors]
+              "words": c.names, "steeple": []} for c in trends.competitors]
     tag_index = {t["id"]: i for i, t in enumerate(tags)}
 
     outlets: list[dict] = []
     outlet_index: dict[str, int] = {}
-    articles = []
+
+    def outlet_of(source_name: str) -> int:
+        src = by_name.get(source_name)
+        key = _outlet(src) if src else source_name
+        if key not in outlet_index:
+            outlet_index[key] = len(outlets)
+            outlets.append({
+                "title": (src.title or src.name) if src else source_name,
+                "category": src.category_title if src else "СМИ",
+            })
+        return outlet_index[key]
+
     skip = [s.name for s in sources if s.trust_tier in TREND_SKIP_TIERS]
     marks = ",".join("?" * len(skip)) or "''"
     first = conn.execute(
         f"SELECT MIN(first_seen) AS f, COUNT(*) AS n FROM articles WHERE source_name NOT IN ({marks})", skip
     ).fetchone()
+
+    articles = []                       # статьи с темами: [дата, издание, заголовок, ссылка, [темы]]
+    by_tag: dict[int, list] = {}        # тема → [(номер статьи, дата, слова заголовка)]
     for row in conn.execute(
-        "SELECT published_date, source_name, title, link, tags_json FROM articles "
-        "WHERE published_date >= date('now', ?) AND tags_json != '[]' ORDER BY published_date DESC",
-        (f"-{TREND_DAYS_LIMIT} days",),
+        f"SELECT published_date, source_name, title, link, tags_json, title_tokens FROM articles "
+        f"WHERE source_name NOT IN ({marks}) AND published_date >= date('now', ?) "
+        "ORDER BY published_date, id",
+        [*skip, f"-{TREND_DAYS_LIMIT} days"],
     ):
+        tokens = row["title_tokens"] or ""
+        o = outlet_of(row["source_name"])
         tag_ids = [tag_index[t] for t in _json_list(row["tags_json"]) if t in tag_index]
         if not tag_ids:
             continue
-        src = by_name.get(row["source_name"])
-        if src and src.trust_tier in TREND_SKIP_TIERS:
-            continue
-        key = _outlet(src) if src else row["source_name"]
-        if key not in outlet_index:
-            outlet_index[key] = len(outlets)
-            outlets.append({"title": (src.title or src.name) if src else row["source_name"]})
-        articles.append([row["published_date"], outlet_index[key], row["title"], row["link"], tag_ids])
+        idx = len(articles)
+        articles.append([row["published_date"], o, row["title"], row["link"], tag_ids])
+        words = token_set(tokens)
+        for t in tag_ids:
+            by_tag.setdefault(t, []).append((idx, row["published_date"], words))
+
+    # Сюжеты: одна новость в десяти изданиях — один сюжет, а не десять упоминаний.
+    stories = {
+        str(t): [[articles[group[0]][0], group] for group in group_stories(items)]
+        for t, items in by_tag.items()
+    }
 
     # Сколько всего статей (с темами и без) вышло за каждый день: тренд
-    # считается по доле статей с темой, потому что объём сбора по дням
-    # неравномерный (ленты отдают только последние материалы).
+    # считается по доле, потому что объём сбора по дням неравномерный
+    # (ленты отдают только последние материалы).
     daily = {
         r["d"]: r["n"] for r in conn.execute(
             f"SELECT published_date AS d, COUNT(*) AS n FROM articles WHERE source_name NOT IN ({marks}) "
@@ -183,6 +206,8 @@ def collect_trends(conn: sqlite3.Connection, sources) -> dict:
         "tags": tags,
         "outlets": outlets,
         "articles": articles,
+        "stories": stories,
+        "steeple": STEEPLE,
     }
 
 
@@ -214,7 +239,7 @@ TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Монитор МСБ</title>
+<title>Монитор трендов Микс</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 /* Макет: одна рабочая колонка — шапка, вкладки, фильтры, затем список записей по нишам. */
@@ -316,7 +341,25 @@ details.heads summary { cursor: pointer; font-size: 0.85rem; color: var(--accent
 details.heads ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; font-size: 0.88rem; }
 details.heads li span { font: 0.74rem var(--font-data); color: var(--muted); margin-right: 6px; }
 .item.self { box-shadow: inset 3px 0 0 var(--accent); }
-.quiet { font-size: 0.85rem; color: var(--muted); }
+.quiet { font-size: 0.85rem; color: var(--muted); margin: 0; }
+details.heads li em { font-style: normal; font-size: 0.8rem; color: var(--muted); margin-left: 6px; }
+.mini { font: 500 0.74rem var(--font-body); color: var(--accent); background: transparent; border: 1px solid var(--line);
+  border-radius: 6px; padding: 1px 8px; margin-left: 8px; cursor: pointer; white-space: nowrap; }
+.mini:hover { border-color: var(--accent); }
+.mini.danger { color: var(--danger); }
+.picker { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.field-input { font: 0.92rem var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; min-width: 0; }
+textarea.field-input { width: 100%; resize: vertical; line-height: 1.45; }
+input.field-input[type="text"] { flex: 1 1 220px; }
+.card-form { display: grid; gap: 12px; }
+.field { display: grid; gap: 4px; }
+.field > span { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+.card-form .field input { width: 100%; }
+.pre { white-space: pre-wrap; }
+.lead { margin: 0; line-height: 1.5; }
+.draft { display: block; font-size: 0.68rem; font-weight: 600; color: var(--mid); text-transform: uppercase; letter-spacing: .04em; }
+.mini:focus-visible, .field-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .head-side { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .btn.small { font-size: 0.82rem; padding: 5px 12px; }
 .settings-head { display: grid; gap: 10px; justify-items: start; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
@@ -331,7 +374,7 @@ footer { color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--lin
 <body>
 <div class="wrap">
   <header>
-    <h1>Монитор МСБ</h1>
+    <h1>Монитор трендов Микс</h1>
     <div class="head-side">
       <div class="status" id="status"></div>
       <button class="btn ghost small" id="openSettings" type="button">Источники и словари</button>
@@ -384,17 +427,13 @@ footer { color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--lin
 
   <section id="trendTab" class="controls" hidden>
     <div><div class="label">Показать</div><div class="chips" id="tViews"></div></div>
-    <div><div class="label" id="tGroupLabel">Сфера</div><div class="chips small" id="tGroups"></div></div>
-    <div><div class="label">Период</div><div class="chips" id="tPeriods"></div></div>
+    <div id="tGroupBox"><div class="label" id="tGroupLabel">Сфера</div><div class="chips small" id="tGroups"></div></div>
+    <div id="tSteepleBox"><div class="label">Тип тренда (STEEPLE)</div><div class="chips small" id="tSteeple"></div></div>
+    <div id="tPeriodBox"><div class="label">Период</div><div class="chips" id="tPeriods"></div></div>
     <p class="note" id="tHistory"></p>
     <div class="stats" id="tStats"></div>
     <div id="tList" style="display:grid;gap:22px"></div>
-    <p class="note">Тренд — изменение доли статей, где упомянута тема или компания, среди всех прочитанных статей
-      за выбранный период по сравнению с таким же предыдущим периодом. Доля, а не число штук: так результат не зависит
-      от того, сколько статей удалось собрать. <b>Новая</b>: раньше упоминаний не было, сейчас ≥3 в ≥3 изданиях.
-      <b>Растёт</b>: доля выросла вдвое, ≥3 издания. <b>Устойчивая</b>: ≥5 упоминаний в ≥3 изданиях без резких изменений.
-      <b>Снижается</b>: доля упала вдвое (было ≥3 упоминаний). Ленты одного издания (например, CNews и CNews: главное) считаются одним изданием.
-      Темы и конкуренты задаются в <span class="okved">trends.yml</span>.</p>
+    <p class="note" id="tHelp"></p>
   </section>
 
   <footer id="regFooter">
@@ -576,15 +615,15 @@ const STATUS = {
   down: ["снижается", "low"], calm: ["спокойно", "low"], na: ["", ""],
 };
 const STATUS_ORDER = ["new", "up", "steady", "down", "calm", "na"];
-const tstate = { view: recall("tview", "theme"), group: ALL, days: Number(recall("tdays", 30)) };
+const tstate = { view: recall("tview", "theme"), group: ALL, steeple: ALL, days: Number(recall("tdays", 30)) };
 if (!TVIEWS.some(([v]) => v === tstate.view)) tstate.view = "theme";
 if (!PERIODS.some(([d]) => d === tstate.days)) tstate.days = 30;
 
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const today = () => new Date().toISOString().slice(0, 10);
 
-// Сравнение долей: сколько процентов всех прочитанных статей упоминают тему.
-// Доля не зависит от того, сколько статей удалось собрать за день.
+// Сравнение долей: сколько сюжетов с темой приходится на все прочитанные
+// статьи. Доля не зависит от того, сколько статей удалось собрать за день.
 const MIN_BASE = 150;   // минимум статей в периоде, чтобы сравнивать доли
 const MIN_BIN = 15;     // минимум статей в столбике графика
 function totalBetween(from, to) {
@@ -599,14 +638,17 @@ function comparable(days) {
 const pct = (x) => (x * 100).toLocaleString("ru-RU", { maximumFractionDigits: x < 0.01 ? 2 : 1 }) + "%";
 
 function tagStats(idx, days) {
-  const cur = [], prev = [];
+  const stories = T.stories[String(idx)] || [];
   const from = days ? sinceDate(days) : "", prevFrom = days ? sinceDate(2 * days) : "";
-  for (const a of T.articles) {
-    if (!a[4].includes(idx)) continue;
-    if (!days || a[0] >= from) cur.push(a);
-    else if (a[0] >= prevFrom) prev.push(a);
+  const cur = [], prev = [];
+  for (const s of stories) {
+    if (!days || s[0] >= from) cur.push(s);
+    else if (s[0] >= prevFrom) prev.push(s);
   }
-  const outlets = new Set(cur.map((a) => a[1])).size;
+  const arts = cur.flatMap((s) => s[1].map((i) => T.articles[i]));
+  const outlets = new Set(arts.map((a) => a[1])).size;
+  const cats = new Map();
+  for (const a of arts) { const c = T.outlets[a[1]].category; cats.set(c, (cats.get(c) || 0) + 1); }
   const curTotal = totalBetween(from, ""), prevTotal = days ? totalBetween(prevFrom, from) : 0;
   const share = curTotal ? cur.length / curTotal : 0, prevShare = prevTotal ? prev.length / prevTotal : 0;
   let status = "na";
@@ -618,12 +660,12 @@ function tagStats(idx, days) {
     else if (c >= 5 && outlets >= 3) status = "steady";
     else status = "calm";
   }
-  return { cur, prev, outlets, share, prevShare, status };
+  return { cur, prev, pubs: arts.length, outlets, cats, share, prevShare, status };
 }
 
-// Столбики: доля статей с темой по дням (неделя, месяц) или неделям (3 месяца,
-// всё время). Серый пунктир — в этот день/неделю статей собрано слишком мало.
-function sparkline(cur, days) {
+// Столбики: доля сюжетов по дням (неделя, месяц) или неделям (3 месяца,
+// всё время). Серый — в этот день или неделю статей собрано слишком мало.
+function sparkline(dates, days) {
   const end = today();
   const start = days ? sinceDate(days) : (T.history_start || end);
   const span = Math.max(1, Math.round((new Date(end) - new Date(start)) / 864e5) + 1);
@@ -631,7 +673,7 @@ function sparkline(cur, days) {
   const n = Math.min(60, Math.ceil(span / step));
   const hits = new Array(n).fill(0), totals = new Array(n).fill(0);
   const binOf = (d) => Math.floor((new Date(d) - new Date(start)) / 864e5 / step);
-  for (const a of cur) { const i = binOf(a[0]); if (i >= 0 && i < n) hits[i]++; }
+  for (const d of dates) { const i = binOf(d); if (i >= 0 && i < n) hits[i]++; }
   for (const [d, c] of Object.entries(T.daily)) { const i = binOf(d); if (i >= 0 && i < n) totals[i] += c; }
   const shares = hits.map((h, i) => totals[i] >= MIN_BIN ? h / totals[i] : null);
   const max = Math.max(0.0001, ...shares.filter((x) => x != null)), w = 6, h = 30;
@@ -639,7 +681,7 @@ function sparkline(cur, days) {
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("class", "spark"); svg.setAttribute("viewBox", `0 0 ${n * w} ${h}`);
   svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", `Доля статей с темой ${step === 7 ? "по неделям" : "по дням"}`);
+  svg.setAttribute("aria-label", `Доля сюжетов ${step === 7 ? "по неделям" : "по дням"}`);
   shares.forEach((v, i) => {
     const r = document.createElementNS(ns, "rect");
     const bh = v == null ? 1 : v ? Math.max(2, (v / max) * (h - 2)) : 1;
@@ -647,10 +689,49 @@ function sparkline(cur, days) {
     r.setAttribute("y", h - bh); r.setAttribute("height", bh);
     if (!v) r.setAttribute("class", "prev");
     const t = document.createElementNS(ns, "title");
-    t.textContent = `${ruDate(addDays(start, i * step))}: ` + (v == null ? `мало статей (${totals[i]})` : `${hits[i]} из ${totals[i]} (${pct(v)})`);
+    t.textContent = `${ruDate(addDays(start, i * step))}: ` + (v == null ? `мало статей (${totals[i]})` : `${hits[i]} сюж. на ${totals[i]} статей (${pct(v)})`);
     r.append(t); svg.append(r);
   });
   return svg;
+}
+
+function headline(a, extra) {
+  const u = safeUrl(a[3]);
+  const source = T.outlets[a[1]].title;
+  return el("li", {}, el("span", {}, `${ruDate(a[0])} · ${source}`),
+    u ? el("a", { href: u, target: "_blank", rel: "noopener" }, a[2]) : a[2],
+    extra ? el("em", {}, extra) : null);
+}
+
+function catLine(cats) {
+  if (!cats.size) return null;
+  const parts = [...cats.entries()].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} ${n}`);
+  return el("div", { class: "nums" }, "Кто пишет: " + parts.join(" · "));
+}
+
+function trendNode(tag, st) {
+  const [stText, stClass] = STATUS[st.status];
+  const prevText = comparable(tstate.days) ? ` · было ${pct(st.prevShare)} (${st.prev.length} сюж.)` : "";
+  const node = el("article", { class: "item" + (tag.self ? " self" : "") },
+    el("div", { class: "meta" },
+      stText ? el("span", { class: "pill " + stClass }, stText) : null,
+      tag.self ? el("span", { class: "pill new" }, "мы") : null,
+      el("span", {}, [tag.group, ...tag.steeple].join(" · "))),
+    el("h3", {}, tag.label),
+    el("div", { class: "nums" }, el("b", {}, pct(st.share)), " · ", el("b", {}, String(st.cur.length)), " сюж. (",
+      String(st.pubs), " публ.) · ", el("b", {}, String(st.outlets)), " изд." + prevText),
+    catLine(st.cats),
+    sparkline(st.cur.map((s) => s[0]), tstate.days));
+  if (st.cur.length) {
+    const ul = el("ul");
+    [...st.cur].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 8).forEach((s) => {
+      const more = s[1].length > 1 ? ` · ещё ${s[1].length - 1} публ.` : "";
+      ul.append(headline(T.articles[s[1][0]], more));
+    });
+    node.append(el("details", { class: "heads" },
+      el("summary", {}, `Сюжеты (${Math.min(8, st.cur.length)} из ${st.cur.length})`), ul));
+  }
+  return node;
 }
 
 function renderTrendControls() {
@@ -658,75 +739,71 @@ function renderTrendControls() {
   for (const [id, t] of TVIEWS) v.append(chip(t, tstate.view === id, () => {
     tstate.view = id; tstate.group = ALL; remember("tview", id); renderTrends();
   }));
-  $("tGroupLabel").textContent = tstate.view === "theme" ? "Сфера" : "Группа";
-  const groups = [...new Set(T.tags.filter((t) => t.kind === tstate.view).map((t) => t.group))];
-  if (!groups.includes(tstate.group)) tstate.group = ALL;
-  const g = $("tGroups"); g.replaceChildren();
-  for (const gr of [ALL, ...groups]) g.append(chip(gr === ALL ? "Все" : gr, tstate.group === gr, () => { tstate.group = gr; renderTrends(); }));
+  const tagView = tstate.view === "theme" || tstate.view === "competitor";
+  $("tGroupBox").hidden = !tagView;
+  $("tSteepleBox").hidden = tstate.view !== "theme";
+  if (tagView) {
+    $("tGroupLabel").textContent = tstate.view === "theme" ? "Сфера" : "Группа";
+    const groups = [...new Set(T.tags.filter((t) => t.kind === tstate.view).map((t) => t.group))];
+    if (!groups.includes(tstate.group)) tstate.group = ALL;
+    const g = $("tGroups"); g.replaceChildren();
+    for (const gr of [ALL, ...groups]) g.append(chip(gr === ALL ? "Все" : gr, tstate.group === gr, () => { tstate.group = gr; renderTrends(); }));
+  }
+  const sp = $("tSteeple"); sp.replaceChildren();
+  for (const s of [ALL, ...T.steeple]) sp.append(chip(s === ALL ? "Все" : s, tstate.steeple === s, () => { tstate.steeple = s; renderTrends(); }));
   const p = $("tPeriods"); p.replaceChildren();
   for (const [d, t] of PERIODS) p.append(chip(t, tstate.days === d, () => { tstate.days = d; remember("tdays", String(d)); renderTrends(); }));
 }
 
-function trendNode(tag, st) {
-  const [stText, stClass] = STATUS[st.status];
-  const prevText = comparable(tstate.days) ? ` · было ${pct(st.prevShare)} (${st.prev.length})` : "";
-  const node = el("article", { class: "item" + (tag.self ? " self" : "") },
-    el("div", { class: "meta" },
-      stText ? el("span", { class: "pill " + stClass }, stText) : null,
-      tag.self ? el("span", { class: "pill new" }, "мы") : null,
-      el("span", {}, tag.group)),
-    el("h3", {}, tag.label),
-    el("div", { class: "nums" }, el("b", {}, pct(st.share)), " статей · ", el("b", {}, String(st.cur.length)), " упом. · ",
-      el("b", {}, String(st.outlets)), " изд." + prevText),
-    sparkline(st.cur, tstate.days));
-  if (st.cur.length) {
-    const ul = el("ul");
-    for (const a of st.cur.slice(0, 8)) {
-      const u = safeUrl(a[3]);
-      ul.append(el("li", {}, el("span", {}, `${ruDate(a[0])} · ${T.outlets[a[1]].title}`),
-        u ? el("a", { href: u, target: "_blank", rel: "noopener" }, a[2]) : a[2]));
-    }
-    node.append(el("details", { class: "heads" },
-      el("summary", {}, `Заголовки (${Math.min(8, st.cur.length)} из ${st.cur.length})`), ul));
-  }
-  return node;
+function setStats(pairs) {
+  const stats = $("tStats"); stats.replaceChildren();
+  pairs.forEach(([v, l]) => stats.append(el("div", { class: "stat" }, el("b", {}, String(v)), el("span", {}, l))));
 }
 
-function renderTrends() {
-  renderTrendControls();
+function emptyBox(title, text) {
+  return el("div", { class: "empty" }, el("strong", {}, title), el("span", {}, text));
+}
+
+function renderTagView() {
   const hist = $("tHistory");
   if (!T.history_start) {
     hist.textContent = "Статьи для трендов ещё не собраны: они начнут копиться после следующего запуска парсера.";
   } else {
-    const base = `Сравниваются доли: какой процент всех прочитанных статей упоминает тему. Сбор статей идёт с ${ruDate(T.collecting_since)}; более ранние дни восстановлены из лент частично.`;
+    const base = `Сравниваются доли: сколько сюжетов с темой приходится на все прочитанные статьи. Сюжет — одна новость во всех изданиях. Сбор статей идёт с ${ruDate(T.collecting_since)}; более ранние дни восстановлены из лент частично.`;
     hist.textContent = !tstate.days ? base + " За всё время статусы не считаются."
       : comparable(tstate.days) ? base
       : base + ` За предыдущий период статей меньше ${MIN_BASE} — статусов пока нет, они появятся по мере ежедневных запусков.`;
   }
-
-  const tags = T.tags.map((t, i) => ({ t, i })).filter(({ t }) => t.kind === tstate.view && (tstate.group === ALL || t.group === tstate.group));
+  const tags = T.tags.map((t, i) => ({ t, i })).filter(({ t }) => t.kind === tstate.view
+    && (tstate.group === ALL || t.group === tstate.group)
+    && (tstate.view !== "theme" || tstate.steeple === ALL || t.steeple.includes(tstate.steeple)));
   const rows = tags.map(({ t, i }) => ({ tag: t, st: tagStats(i, tstate.days) }));
   const active = rows.filter((r) => r.st.cur.length || r.st.prev.length || r.tag.self);
   const silent = rows.filter((r) => !r.st.cur.length && !r.st.prev.length && !r.tag.self);
   active.sort((a, b) => (b.tag.self - a.tag.self) || (STATUS_ORDER.indexOf(a.st.status) - STATUS_ORDER.indexOf(b.st.status)) || (b.st.share - a.st.share));
-
-  const stats = $("tStats"); stats.replaceChildren();
   const cnt = (s) => rows.filter((r) => r.st.status === s).length;
   const ok = comparable(tstate.days);
-  [[totalBetween(tstate.days ? sinceDate(tstate.days) : "", ""), "статей прочитано за период"],
-   [ok ? cnt("new") : "—", "новых"], [ok ? cnt("up") : "—", "растут"], [ok ? cnt("down") : "—", "снижаются"]]
-    .forEach(([v, l]) => stats.append(el("div", { class: "stat" }, el("b", {}, String(v)), el("span", {}, l))));
-
+  setStats([[totalBetween(tstate.days ? sinceDate(tstate.days) : "", ""), "статей прочитано за период"],
+    [ok ? cnt("new") : "—", "новых"], [ok ? cnt("up") : "—", "растут"], [ok ? cnt("down") : "—", "снижаются"]]);
   const list = $("tList"); list.replaceChildren();
   if (!active.length) {
-    list.append(el("div", { class: "empty" }, el("strong", {}, "За период упоминаний нет"),
-      el("span", {}, "Расширьте период или выберите другую сферу. Статьи копятся с каждым запуском парсера.")));
+    list.append(emptyBox("За период упоминаний нет", "Расширьте период или выберите другую сферу. Статьи копятся с каждым запуском парсера."));
   } else {
     const ledger = el("div", { class: "ledger" });
     active.forEach((r) => ledger.append(trendNode(r.tag, r.st)));
     list.append(ledger);
   }
   if (silent.length) list.append(el("p", { class: "quiet" }, "Без упоминаний за период: " + silent.map((r) => r.tag.label).join(", ") + "."));
+  $("tHelp").replaceChildren(
+    "Статусы — сравнение с таким же предыдущим периодом. ", el("b", {}, "Новая"), ": раньше не было, сейчас ≥3 сюжетов в ≥3 изданиях. ",
+    el("b", {}, "Растёт"), ": доля выросла вдвое, ≥3 издания. ", el("b", {}, "Устойчивая"), ": ≥5 сюжетов в ≥3 изданиях без резких изменений. ",
+    el("b", {}, "Снижается"), ": доля упала вдвое (было ≥3 сюжетов). Ленты одного издания считаются одним изданием. ",
+    "«Кто пишет» — типы источников из sources.yml. Темы, конкуренты и тип STEEPLE задаются в trends.yml.");
+}
+
+function renderTrends() {
+  renderTrendControls();
+  renderTagView();
 }
 
 function renderDict() {

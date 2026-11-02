@@ -39,12 +39,33 @@ _NEWS_ITEMS_ADDED_COLUMNS = {
 }
 
 
+_ARTICLES_ADDED_COLUMNS = {
+    "title_tokens": "TEXT",
+    "tokens_version": "TEXT",
+}
+_TREND_CARDS_ADDED_COLUMNS = {
+    "origin": "TEXT NOT NULL DEFAULT 'manual'",
+    "auto_key": "TEXT",
+    "status": "TEXT NOT NULL DEFAULT 'active'",
+    "stats_json": "TEXT",
+    "weak_evidence": "INTEGER NOT NULL DEFAULT 0",
+    "signals_hash": "TEXT",
+    "ai_model": "TEXT",
+    "ai_generated_at": "TEXT",
+}
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    # Новые колонки articles добавляем до схемы: индекс или запрос в схеме
+    # может на них ссылаться, а CREATE TABLE IF NOT EXISTS их не добавит.
+    for table, added in (("news_items", _NEWS_ITEMS_ADDED_COLUMNS), ("articles", _ARTICLES_ADDED_COLUMNS),
+                         ("trend_cards", _TREND_CARDS_ADDED_COLUMNS)):
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if existing:
+            for column, sql_type in added.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
     conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(news_items)")}
-    for column, sql_type in _NEWS_ITEMS_ADDED_COLUMNS.items():
-        if column not in existing:
-            conn.execute(f"ALTER TABLE news_items ADD COLUMN {column} {sql_type}")
     conn.commit()
 
 
@@ -439,6 +460,8 @@ def retag_articles(conn: sqlite3.Connection, trends=None) -> int:
     словаря trends.yml (или ещё не размеченные). Возвращает число статей."""
     from pipeline.trends import get_trends, tag_article
 
+    from pipeline.trends import TOKENS_VERSION, title_tokens
+
     trends = trends or get_trends()
     rows = conn.execute(
         "SELECT id, title, text FROM articles WHERE tags_version IS NULL OR tags_version != ?",
@@ -448,5 +471,87 @@ def retag_articles(conn: sqlite3.Connection, trends=None) -> int:
         tags = tag_article(row["title"], row["text"], trends)
         conn.execute("UPDATE articles SET tags_json = ?, tags_version = ? WHERE id = ?",
                      (json.dumps(tags), trends.version, row["id"]))
+    # Значимые слова заголовка — для сюжетов и новых сигналов.
+    for row in conn.execute(
+        "SELECT id, title FROM articles WHERE tokens_version IS NULL OR tokens_version != ?", (TOKENS_VERSION,)
+    ).fetchall():
+        conn.execute("UPDATE articles SET title_tokens = ?, tokens_version = ? WHERE id = ?",
+                     (title_tokens(row["title"]), TOKENS_VERSION, row["id"]))
     conn.commit()
     return len(rows)
+
+
+# ---- Карточки трендов ----
+
+CARD_TEXT_FIELDS = ("what_changes", "drivers", "barriers", "consequences")
+
+
+def list_cards(conn: sqlite3.Connection) -> list[dict]:
+    cards = []
+    for row in conn.execute("SELECT * FROM trend_cards ORDER BY updated_at DESC, id DESC"):
+        signals = [dict(r) for r in conn.execute(
+            "SELECT id, link, title, published_date, source, note FROM trend_card_signals "
+            "WHERE card_id = ? ORDER BY published_date DESC, id DESC", (row["id"],))]
+        cards.append({
+            "id": row["id"], "title": row["title"],
+            **{f: row[f] for f in CARD_TEXT_FIELDS},
+            "steeple": json.loads(row["steeple_json"] or "[]"),
+            "origin": row["origin"], "status": row["status"],
+            "stats": json.loads(row["stats_json"]) if row["stats_json"] else None,
+            "weak_evidence": bool(row["weak_evidence"]),
+            "ai_model": row["ai_model"], "ai_generated_at": (row["ai_generated_at"] or "")[:10],
+            "updated_at": row["updated_at"][:10], "signals": signals,
+        })
+    return cards
+
+
+def save_card(conn: sqlite3.Connection, data: dict) -> int:
+    """Создаёт карточку (без id) или обновляет её поля (с id)."""
+    title = str(data.get("title") or "").strip()
+    if not title:
+        raise ValueError("у карточки должно быть название")
+    values = {f: str(data.get(f) or "").strip() for f in CARD_TEXT_FIELDS}
+    steeple = json.dumps([str(x) for x in data.get("steeple") or []], ensure_ascii=False)
+    now = datetime.now(timezone.utc).isoformat()
+    card_id = data.get("id")
+    if card_id:
+        cur = conn.execute(
+            "UPDATE trend_cards SET title = ?, what_changes = ?, drivers = ?, barriers = ?, consequences = ?, "
+            "steeple_json = ?, updated_at = ? WHERE id = ?",
+            (title, *values.values(), steeple, now, int(card_id)))
+        if cur.rowcount == 0:
+            raise ValueError("карточка не найдена")
+    else:
+        cur = conn.execute(
+            "INSERT INTO trend_cards (title, what_changes, drivers, barriers, consequences, steeple_json, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, *values.values(), steeple, now, now))
+        card_id = cur.lastrowid
+    conn.commit()
+    return int(card_id)
+
+
+def delete_card(conn: sqlite3.Connection, card_id: int) -> None:
+    conn.execute("DELETE FROM trend_cards WHERE id = ?", (int(card_id),))
+    conn.commit()
+
+
+def add_card_signal(conn: sqlite3.Connection, card_id: int, signal: dict) -> None:
+    link = str(signal.get("link") or "").strip()
+    title = str(signal.get("title") or "").strip()
+    if not link.startswith(("http://", "https://")) or not title:
+        raise ValueError("у сигнала должны быть заголовок и ссылка")
+    if conn.execute("SELECT 1 FROM trend_cards WHERE id = ?", (int(card_id),)).fetchone() is None:
+        raise ValueError("карточка не найдена")
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT OR IGNORE INTO trend_card_signals (card_id, link, title, published_date, source, note, added_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (int(card_id), link, title, signal.get("date"), signal.get("source"), str(signal.get("note") or ""), now))
+    conn.execute("UPDATE trend_cards SET updated_at = ? WHERE id = ?", (now, int(card_id)))
+    conn.commit()
+
+
+def remove_card_signal(conn: sqlite3.Connection, signal_id: int) -> None:
+    conn.execute("DELETE FROM trend_card_signals WHERE id = ?", (int(signal_id),))
+    conn.commit()

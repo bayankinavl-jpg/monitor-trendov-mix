@@ -19,6 +19,12 @@ HTTP_RETRY_COUNT = 1
 HTTP_USER_AGENT = "AI-Lab-RegNewsTracker/0.2 (+regulatory news registry for internal bank use)"
 REQUEST_DELAY_SECONDS = 1.0
 
+# Автоматические карточки трендов (pipeline/trend_cards.py). Текст карточек
+# пишет Claude API, если задан ключ ANTHROPIC_API_KEY; без ключа карточки
+# собираются только из цифр и сигналов.
+TREND_CARDS_MODEL = "claude-opus-5-5"
+TREND_CARDS_MAX = 10  # не больше стольких активных карточек — и вызовов модели за запуск
+
 # Домены, к которым парсер не обращается (tz_news_parser.md, раздел
 # "Источники новостей", правило 5). Запрет на pravo.gov.ru снят 11.10.2026.
 FORBIDDEN_DOMAINS = {

@@ -16,6 +16,7 @@ from config import HTTP_RETRY_COUNT, HTTP_TIMEOUT, HTTP_USER_AGENT, REQUEST_DELA
 from pipeline import keywords_engine
 from pipeline.normalize import to_moscow_tz
 from sources.sources_config import NewsSource, load_sources
+from sources.hse_scan import NotHseNewsPageError, parse_hse_news
 from sources.telegram_scan import NotTelegramPageError, parse_channel_html
 from journal.request_log import RequestLogger
 
@@ -139,12 +140,14 @@ def _fetch_feed(
             resp.raise_for_status()
             if source.kind == "telegram":
                 return parse_channel_html(resp.content)
+            if source.kind == "hse":
+                return parse_hse_news(resp.content)
             return _parse_rss(resp.content)
         except requests.exceptions.RequestException as exc:
             last_exc = exc
             request_logger.log(source.feed_url, "ERROR", str(exc))
             continue
-        except (NotRssError, NotTelegramPageError) as exc:
+        except (NotRssError, NotTelegramPageError, NotHseNewsPageError) as exc:
             request_logger.log(source.feed_url, "NOT_RSS", str(exc))
             raise FeedUnavailableError(f"{source.name}: ответ не RSS — {exc}") from exc
         except ET.ParseError as exc:
@@ -161,6 +164,12 @@ def _parse_rss(content: bytes) -> list[tuple[str, str, str, str | None]]:
     if head.startswith((b"<!doctype html", b"<html")):
         raise NotRssError("сайт вернул HTML-страницу вместо RSS-ленты")
     root = ET.fromstring(content)
+    # Некоторые сайты (Retail.ru, New Retail) пишут RSS с пространством имён:
+    # <{http://backend.userland.com/rss2}rss>. Убираем его у всех тегов.
+    if root.tag.startswith("{"):
+        for el in root.iter():
+            if isinstance(el.tag, str) and el.tag.startswith("{"):
+                el.tag = el.tag.split("}", 1)[1]
     if root.tag != "rss":
         raise NotRssError(f"корневой элемент <{root.tag}>, а не <rss>")
     items = []

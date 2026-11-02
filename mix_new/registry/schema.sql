@@ -102,8 +102,47 @@ CREATE TABLE IF NOT EXISTS articles (
     source_name TEXT NOT NULL,
     tags_json TEXT,
     tags_version TEXT,
+    title_tokens TEXT,
+    tokens_version TEXT,
     first_seen TEXT NOT NULL,
     UNIQUE(link)
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_date ON articles(published_date);
+
+-- Карточки трендов (вкладка «Тренды» → «Карточки трендов»): группа
+-- сигналов об одном изменении и его описание. Создаются автоматически
+-- после каждого запуска (pipeline/trend_cards.py), origin = 'auto'.
+CREATE TABLE IF NOT EXISTS trend_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    what_changes TEXT NOT NULL DEFAULT '',
+    drivers TEXT NOT NULL DEFAULT '',
+    barriers TEXT NOT NULL DEFAULT '',
+    consequences TEXT NOT NULL DEFAULT '',
+    steeple_json TEXT NOT NULL DEFAULT '[]',
+    origin TEXT NOT NULL DEFAULT 'manual',
+    auto_key TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    stats_json TEXT,
+    weak_evidence INTEGER NOT NULL DEFAULT 0,
+    signals_hash TEXT,
+    ai_model TEXT,
+    ai_generated_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trend_cards_auto ON trend_cards(auto_key);
+
+CREATE TABLE IF NOT EXISTS trend_card_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL REFERENCES trend_cards(id) ON DELETE CASCADE,
+    link TEXT NOT NULL,
+    title TEXT NOT NULL,
+    published_date TEXT,
+    source TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL,
+    UNIQUE(card_id, link)
+);

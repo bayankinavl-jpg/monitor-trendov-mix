@@ -99,3 +99,48 @@ def test_competitor_theme_needs_competitor_in_article(tmp_path):
 competitors:"""))
     assert tag_article("Сбой у хостинг-провайдера", "", t) == []
     assert _labels(t, tag_article("Сбой в приложении ВТБ", "", t)) == ["ВТБ", "Сбои"]
+
+
+# ---- Сюжеты, сигналы, карточки ----
+
+from pipeline.trends import group_stories, title_tokens, token_set
+from registry.db import add_card_signal, delete_card, list_cards, remove_card_signal, save_card
+
+
+def test_title_tokens_skip_names_and_service_words():
+    toks = title_tokens("Путин обсудил с Ираном поэкземплярный учёт масла")
+    assert "путин" not in toks and "иран" not in toks
+    assert "поэкземплярный/A учет/N" in toks
+
+
+def test_same_event_from_different_outlets_is_one_story():
+    t = lambda s: token_set(title_tokens(s))
+    items = [
+        (0, "2026-11-01", t("Хостинг-провайдер Beget связал массовый сбой с кибератакой")),
+        (1, "2026-11-02", t("Масштабный сбой Beget произошёл из-за кибератаки")),
+        (2, "2026-11-02", t("Wildberries снизил комиссию для продавцов одежды")),
+        (3, "2026-11-09", t("Beget снова сообщил о сбое после кибератаки")),  # через неделю — новый сюжет
+    ]
+    assert group_stories(items) == [[0, 1], [2], [3]]
+
+
+def test_trend_card_lifecycle(conn):
+    card_id = save_card(conn, {"title": "ИИ-агенты", "drivers": "дешевле", "steeple": ["Технологические"]})
+    add_card_signal(conn, card_id, {"link": "https://a.ru/1", "title": "Банки и ИИ", "date": "2026-11-01", "source": "РБК"})
+    add_card_signal(conn, card_id, {"link": "https://a.ru/1", "title": "Банки и ИИ"})  # повтор не добавляется
+    cards = list_cards(conn)
+    assert cards[0]["title"] == "ИИ-агенты" and cards[0]["steeple"] == ["Технологические"]
+    assert len(cards[0]["signals"]) == 1
+    remove_card_signal(conn, cards[0]["signals"][0]["id"])
+    assert list_cards(conn)[0]["signals"] == []
+    delete_card(conn, card_id)
+    assert list_cards(conn) == []
+
+
+def test_card_rejects_bad_input(conn):
+    import pytest
+    with pytest.raises(ValueError):
+        save_card(conn, {"title": "  "})
+    card_id = save_card(conn, {"title": "Тренд"})
+    with pytest.raises(ValueError):
+        add_card_signal(conn, card_id, {"link": "javascript:alert(1)", "title": "x"})

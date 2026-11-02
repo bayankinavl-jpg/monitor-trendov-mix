@@ -6,6 +6,9 @@ data/registry.sqlite3
 data/exports/
 logs/
 
+# Ключи и локальные настройки — только на этом компьютере
+.env
+
 # Локальные файлы, которые не нужны в репозитории
 .DS_Store
 data/registry_*.sqlite3
