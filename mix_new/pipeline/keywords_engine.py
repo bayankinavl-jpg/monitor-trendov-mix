@@ -18,7 +18,9 @@ from config import KEYWORDS_PATH
 from pipeline.morph import lemmas
 from pipeline.normalize import normalize_text
 
-WORD_GROUPS = ("acts_and_bodies", "stages", "changes", "topics", "exclusions")
+DEFAULT_SPHERE = "Опт и производство"
+
+WORD_GROUPS = ("acts_and_bodies", "stages", "markers", "actions", "changes", "topics", "exclusions")
 
 
 @dataclass
@@ -26,12 +28,15 @@ class IndustryGroup:
     label: str
     words: list[str]
     okved: list[str]
+    sphere: str = DEFAULT_SPHERE
 
 
 @dataclass
 class KeywordSet:
     acts_and_bodies: list[str] = field(default_factory=list)
     stages: list[str] = field(default_factory=list)
+    markers: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
     changes: list[str] = field(default_factory=list)
     topics: list[str] = field(default_factory=list)
     exclusions: list[str] = field(default_factory=list)
@@ -49,7 +54,8 @@ class MatchResult:
 def load_keywords(path: Path = KEYWORDS_PATH) -> KeywordSet:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     industries = [
-        IndustryGroup(label=entry.get("label", entry["words"][0]), words=entry["words"], okved=entry["okved"])
+        IndustryGroup(label=entry.get("label", entry["words"][0]), words=entry["words"], okved=entry["okved"],
+                      sphere=entry.get("sphere", DEFAULT_SPHERE))
         for entry in raw.get("industries", [])
     ]
     return KeywordSet(
@@ -103,9 +109,23 @@ def match(title: str, annotation: str | None = None, keyword_set: KeywordSet | N
             industry_groups.append(group)
 
     groups_found = {group for _, group in matched}
-    passed = (
-        bool({"changes", "stages"} & groups_found)
-        and bool({"acts_and_bodies", "topics", "industries"} & groups_found)
-        and "exclusions" not in groups_found
+    # 1. Признак регуляторного изменения в заголовке: вид акта или стадия; либо глагол
+    #    («утвердил», «обязать», «запретить») при названном органе. Одного
+    #    названия органа мало, а глагол без органа может описывать компанию.
+    # 2. Предмет: тема, отрасль, аббревиатура либо профильный орган вместе
+    #    со словом-изменением. Виды актов («федеральный закон») органами не считаются.
+    marker_words = set(keyword_set.markers)
+    bodies = [w for w, g in matched if g == "acts_and_bodies" and w not in marker_words]
+    # Признак ищется только в заголовке: если акт или действие названы лишь
+    # в середине длинного текста (пост в Telegram), это не новость о регулировании.
+    title_lemmas = lemmas(title)
+    title_signal = any(
+        phrase_in(title_lemmas, w) for w in keyword_set.stages + keyword_set.markers
     )
+    title_action = any(phrase_in(title_lemmas, w) for w in keyword_set.actions)
+    has_signal = title_signal or (bool(bodies) and title_action)
+    has_subject = bool({"topics", "industries", "abbreviations"} & groups_found) or (
+        bool(bodies) and "changes" in groups_found
+    )
+    passed = has_signal and has_subject and "exclusions" not in groups_found
     return MatchResult(passed=passed, matched=matched, industries=industry_groups)

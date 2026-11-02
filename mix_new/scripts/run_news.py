@@ -1,12 +1,12 @@
 """Главная точка входа парсера новостей: python scripts/run_news.py --days N.
 
 По умолчанию --days 90 при первом запуске (пустой реестр новостей),
-иначе --days 1 (ежедневный режим) — см. tz_news_parser.md, шаг «Сбор»."""
+иначе дни с прошлого запуска плюс день запаса (ежедневный режим даёт 2)."""
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -17,11 +17,22 @@ from export.news_xlsx_export import export_news_xlsx
 from journal.journal import render_news_report
 from pipeline.runner_news import run as run_pipeline
 from registry.db import get_connection, init_db
+from scripts.build_landing import build as build_landing
 
 
 def _default_days(conn) -> int:
+    """90 дней для пустого реестра, иначе дни с прошлого запуска плюс день запаса.
+
+    Если Mac был выключен или автозапуск пропущен, следующий запуск
+    подберёт пропущенные дни; повторы объединяются при записи в реестр."""
     count = conn.execute("SELECT COUNT(*) AS c FROM news_items").fetchone()["c"]
-    return 90 if count == 0 else 1
+    if count == 0:
+        return 90
+    last = conn.execute("SELECT MAX(started_at) AS s FROM run_journal").fetchone()["s"]
+    if not last:
+        return 1
+    last_date = datetime.fromisoformat(last).astimezone().date()
+    return min(90, max(1, (date.today() - last_date).days + 1))
 
 
 def main() -> None:
@@ -50,10 +61,13 @@ def main() -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report, encoding="utf-8")
 
+    landing_path = build_landing(conn)
+
     print(report)
     print(f"\nXLSX: {xlsx_path}")
     print(f"JSON: {json_path}")
     print(f"Отчёт: {report_path}")
+    print(f"Страница монитора: {landing_path}")
 
 
 if __name__ == "__main__":

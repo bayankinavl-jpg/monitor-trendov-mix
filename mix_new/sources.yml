@@ -17,16 +17,19 @@ sources:
   # запускать не реже раза в неделю. Ленту Конституционного Суда не
   # подключаем (судебная практика вне охвата ТЗ).
   - name: pravo_government
+    title: "pravo.gov.ru: Правительство"
     focus: Акты Правительства
     feed_url: http://publication.pravo.gov.ru/api/rss?block=government&pageSize=200
     trust_tier: primary_source
 
   - name: pravo_president
+    title: "pravo.gov.ru: Президент и законы"
     focus: Акты Президента и федеральные законы
     feed_url: http://publication.pravo.gov.ru/api/rss?block=president&pageSize=200
     trust_tier: primary_source
 
   - name: pravo_federal_authorities
+    title: "pravo.gov.ru: министерства и службы"
     focus: Акты министерств и служб
     feed_url: http://publication.pravo.gov.ru/api/rss?block=federal_authorities&pageSize=200
     trust_tier: primary_source
@@ -34,102 +37,334 @@ sources:
   # council_1 — Совет Федерации, council_2 — Государственная Дума
   # (проверено 11.10.2026). pageSize меньше 10 портал не принимает.
   - name: pravo_federation_council
+    title: "pravo.gov.ru: Совет Федерации"
     focus: Постановления Совета Федерации
     feed_url: http://publication.pravo.gov.ru/api/rss?block=council_1&pageSize=200
     trust_tier: primary_source
 
   - name: pravo_state_duma
+    title: "pravo.gov.ru: Госдума"
     focus: Постановления Государственной Думы
     feed_url: http://publication.pravo.gov.ru/api/rss?block=council_2&pageSize=200
     trust_tier: primary_source
 
-  - name: tass
-    focus: Общие новости
-    feed_url: https://tass.ru/rss/v2.xml
-    trust_tier: general
-
+  # ---- Деловые СМИ (общие, фильтруются по ключевым словам) ----
   - name: interfax
+    title: "Интерфакс"
     focus: Общие новости
     feed_url: https://www.interfax.ru/rss.asp
     trust_tier: general
 
   - name: kommersant
+    title: "Коммерсантъ"
     focus: Общие новости
     feed_url: https://www.kommersant.ru/RSS/news.xml
     trust_tier: general
 
+  - name: kommersant_business
+    title: "Коммерсантъ: бизнес"
+    focus: Бизнес
+    feed_url: https://www.kommersant.ru/RSS/section-business.xml
+    trust_tier: general
+
+  - name: kommersant_economics
+    title: "Коммерсантъ: экономика"
+    focus: Экономика и политика регуляторов
+    feed_url: https://www.kommersant.ru/RSS/section-economics.xml
+    trust_tier: general
+
   - name: vedomosti
+    title: "Ведомости"
     focus: Общие новости
     feed_url: https://www.vedomosti.ru/rss/news
     trust_tier: general
 
-  - name: rbc
-    focus: Общие новости
-    feed_url: https://www.rbc.ru/rbcfreenews/rss.xml
+  - name: vedomosti_economics
+    title: "Ведомости: экономика"
+    focus: Экономика
+    feed_url: https://www.vedomosti.ru/rss/rubric/economics
     trust_tier: general
 
-  # Ленты правовых систем отдают только последние документы (Гарант — 10,
-  # КонсультантПлюс — 50), поэтому полный охват даёт ежедневный запуск.
+  - name: vedomosti_finance
+    title: "Ведомости: финансы"
+    focus: Финансы, налоги, банки
+    feed_url: https://www.vedomosti.ru/rss/rubric/finance
+    trust_tier: general
+
+  - name: ria
+    title: "РИА Новости"
+    focus: Общие новости
+    feed_url: https://ria.ru/export/rss2/archive/index.xml
+    trust_tier: general
+
+  - name: finmarket
+    title: "Финмаркет"
+    focus: Финансовые рынки и экономика
+    feed_url: https://www.finmarket.ru/rss/mainnews.asp
+    trust_tier: general
+
+  - name: klerk
+    title: "Клерк"
+    focus: Налоги, взносы, отчётность
+    feed_url: https://www.klerk.ru/xml/index.xml
+    trust_tier: general
+
+  - name: rbc
+    title: "РБК"
+    focus: Общие новости
+    feed_url: https://rssexport.rbc.ru/rbcnews/news/30/full.rss
+    trust_tier: general
+
+  - name: sber_pro
+    title: "СберПро"
+    focus: Малый бизнес и предпринимательство
+    feed_url: https://sber.pro/rss
+    trust_tier: general
+
+  - name: spark
+    title: "Spark"
+    focus: Малый бизнес и предпринимательство
+    feed_url: https://spark.ru/rss
+    trust_tier: general
+
+  # ---- Регуляторы (сайты ведомств; trust_tier general: оценка достоверности
+  # по ним не повышается, акт нужно подтверждать по ленте pravo.gov.ru) ----
+  - name: bank_rossii_news
+    title: "Банк России: новости"
+    focus: "Банк России: новости"
+    feed_url: https://www.cbr.ru/rss/RssNews
+    trust_tier: general
+
+  - name: bank_rossii_press
+    title: "Банк России: пресс-релизы"
+    focus: "Банк России: пресс-релизы"
+    feed_url: https://www.cbr.ru/rss/RssPress
+    trust_tier: general
+
+  # ---- Правовые системы ----
+  # Ленты отдают только последние документы (Гарант — 10, КонсультантПлюс — 50),
+  # поэтому полный охват даёт ежедневный запуск.
   - name: garant_federal
+    title: "Гарант: федеральные акты"
     focus: Новые федеральные акты с номером и датой
     feed_url: https://rss.garant.ru/hotlaw/federal/
     trust_tier: legal
 
   - name: garant_news
+    title: "Гарант: новости"
     focus: Правовые новости
     feed_url: https://rss.garant.ru/categories/news/
     trust_tier: legal
 
   - name: consultant
+    title: "КонсультантПлюс"
     focus: Новые федеральные документы с номером и датой
     feed_url: https://www.consultant.ru/rss/hotdocs.xml
     trust_tier: legal
 
-  # robots.txt запрещает сбор (проверено 11.10.2026). Источник остаётся
-  # в списке, чтобы запрет был виден в журнале каждого запуска.
-  - name: rossiyskaya_gazeta_dokumenty
-    focus: Официальная публикация федеральных законов и постановлений Правительства
-    feed_url: https://www.rg.ru/tema/documenty/feed.xml
-    trust_tier: official_publication
+  - name: consultant_accountant
+    title: "КонсультантПлюс: для бухгалтера"
+    focus: Налоги, взносы, отчётность
+    feed_url: https://www.consultant.ru/rss/nw.xml
+    trust_tier: legal
+
+  - name: garant_site_news
+    title: "Гарант: новости сайта"
+    focus: Правовые новости
+    feed_url: https://www.garant.ru/rss/news/
+    trust_tier: legal
 
   - name: parlamentskaya_gazeta
+    title: "Парламентская газета"
     focus: Законопроекты, официальная публикация федеральных законов
     feed_url: https://www.pnp.ru/rss/
     trust_tier: official_publication
 
-  - name: klerk
-    focus: Налоги, взносы, отчётность
-    feed_url: https://www.klerk.ru/xml/index.xml
+  # ---- Отраслевые: IT и цифровое регулирование ----
+  - name: cnews
+    title: "CNews"
+    focus: IT, электроника
+    feed_url: https://www.cnews.ru/inc/rss/news.xml
     trust_tier: general
 
-  # robots.txt запрещает сбор, сама лента отвечает «доступ запрещён»
-  # (HTTP 403), проверено 11.10.2026. Обходить запрет не нужно.
+  - name: cnews_top
+    title: "CNews: главное"
+    focus: IT, главные новости
+    feed_url: https://www.cnews.ru/inc/rss/news_top.xml
+    trust_tier: general
+
+  - name: vc_ru
+    title: "vc.ru"
+    focus: IT, стартапы, малый бизнес
+    feed_url: https://vc.ru/rss
+    trust_tier: general
+
+  - name: habr_news
+    title: "Хабр: новости"
+    focus: IT, разработка
+    feed_url: https://habr.com/ru/rss/news/?fl=ru
+    trust_tier: general
+
+  - name: comnews
+    title: "ComNews"
+    focus: IT и связь, регулирование отрасли
+    feed_url: https://www.comnews.ru/rss.xml
+    trust_tier: general
+
+  - name: d_russia
+    title: "Digital Russia"
+    focus: Цифровое регулирование, персональные данные
+    feed_url: https://d-russia.ru/feed
+    trust_tier: general
+
+  - name: vedomosti_technology
+    title: "Ведомости: технологии"
+    focus: Технологии
+    feed_url: https://www.vedomosti.ru/rss/rubric/technology
+    trust_tier: general
+
+  # ---- Возвращены 02.11.2026 по просьбе пользователя. Если сайт запрещает
+  # сбор в robots.txt или лента не читается, парсер пропускает источник
+  # и пишет причину в журнал (на 22.10.2026 так было у всех десяти). ----
+  - name: tass
+    title: "ТАСС"
+    focus: Общие новости
+    feed_url: https://tass.ru/rss/v2.xml
+    trust_tier: general
+
+  - name: rossiyskaya_gazeta_dokumenty
+    title: "Российская газета: документы"
+    focus: Официальные документы, постановления Правительства
+    feed_url: https://www.rg.ru/tema/documenty/feed.xml
+    trust_tier: official_publication
+
   - name: milknews
-    focus: Молочная и пищевая промышленность
+    title: "MilkNews"
+    focus: Молочная отрасль
     feed_url: https://milknews.ru/rss/
     trust_tier: general
 
   - name: dairynews
-    focus: Молочная и пищевая промышленность
+    title: "DairyNews"
+    focus: Молочная отрасль
     feed_url: https://dairynews.today/rss/
     trust_tier: general
 
-  - name: cnews
-    focus: Электроника и ИТ
-    feed_url: https://www.cnews.ru/inc/rss/news.xml
-    trust_tier: general
-
   - name: agroinvestor
-    focus: Сельское хозяйство
+    title: "Агроинвестор"
+    focus: АПК
     feed_url: https://www.agroinvestor.ru/rss/
     trust_tier: general
 
+  - name: minpromtorg
+    title: "Минпромторг"
+    focus: Новости ведомства
+    feed_url: https://minpromtorg.gov.ru/rss/
+    trust_tier: general
+
+  - name: fns_moscow
+    title: "ФНС: Москва"
+    focus: Налоги, новости ФНС
+    feed_url: https://www.nalog.gov.ru/rn77/rss/news/
+    trust_tier: general
+
+  - name: securitylab
+    title: "SecurityLab"
+    focus: IT, информационная безопасность
+    feed_url: https://www.securitylab.ru/_services/export/rss/
+    trust_tier: general
+
   - name: retail_ru
+    title: "Retail.ru"
     focus: Ритейл
-    feed_url: https://www.retail.ru/rss/
+    feed_url: https://www.retail.ru/rss/news/
     trust_tier: general
 
   - name: prometall
-    focus: Металлы
+    title: "Prometall"
+    focus: Металл и металлопрокат
     feed_url: https://prometall.info/rss/
+    trust_tier: general
+
+  # Не подключаем по правилам проекта (config.FORBIDDEN_DOMAINS): regulation.gov.ru, sozd.duma.gov.ru.
+
+  # ---- Telegram-каналы (публичная веб-версия t.me/s/<канал>, kind: telegram) ----
+  # Страница отдаёт ~20 последних постов, поэтому запускайте парсер каждый день.
+  # Чтобы добавить канал: скопируйте блок, замените <канал> в feed_url и name.
+  - name: tg_government_rus
+    title: "Telegram: Правительство России"
+    focus: Официальный канал Правительства
+    feed_url: https://t.me/s/government_rus
+    kind: telegram
+    trust_tier: general
+
+  - name: tg_it2b_channel
+    title: "Telegram: СофтТех"
+    focus: IT, софт для бизнеса
+    feed_url: https://t.me/s/it2b_channel
+    kind: telegram
+    trust_tier: general
+
+  - name: tg_bezsmuzi
+    title: "Telegram: Русский ИТ бизнес"
+    focus: IT-бизнес
+    feed_url: https://t.me/s/bezsmuzi
+    kind: telegram
+    trust_tier: general
+
+  - name: tg_konturelba
+    title: "Telegram: Контур для предпринимателя"
+    focus: Малый бизнес, налоги, отчётность
+    feed_url: https://t.me/s/konturelba
+    kind: telegram
+    trust_tier: general
+
+  - name: tg_knopkanews
+    title: "Telegram: Кнопка: новости бизнеса"
+    focus: Новости бизнеса и бухгалтерия для ИП и ООО
+    feed_url: https://t.me/s/knopkanews
+    kind: telegram
+    trust_tier: general
+
+  - name: tg_crptbreaking
+    title: "Telegram: Честный ЗНАК breaking news"
+    focus: Маркировка, Честный ЗНАК
+    feed_url: https://t.me/s/crptbreaking
+    kind: telegram
+    trust_tier: general
+
+  - name: tg_minpromtorgrf
+    title: "Telegram: Новости Минпромторга РФ"
+    focus: Официальный канал Минпромторга
+    feed_url: https://t.me/s/minpromtorgrf
+    kind: telegram
+    trust_tier: general
+
+  # ---- Сайты с RSS (добавлено 02.11.2026) ----
+  - name: poshiv_rus
+    title: "Пошив.рус: новости"
+    focus: Швейная отрасль, лёгкая промышленность
+    feed_url: https://xn--b1alrd0c.xn--p1acf/news?format=feed&type=rss
+    trust_tier: general
+
+  - name: tg_predprinimatelru
+    title: "Telegram: Предприниматель.ру"
+    focus: Малый бизнес, предпринимательство
+    feed_url: https://t.me/s/predprinimatelru
+    kind: telegram
+    trust_tier: general
+
+  # ---- Рынок и конкуренты (для вкладки «Тренды», добавлено 02.11.2026) ----
+  # РБК, Коммерсантъ, Ведомости уже подключены выше. У сайта
+  # Предприниматель.ру RSS-ленты нет, подключён его Telegram-канал.
+  - name: sostav
+    title: "Sostav"
+    focus: Реклама, маркетинг, бренды, бизнес
+    feed_url: https://www.sostav.ru/rss
+    trust_tier: general
+
+  - name: banki_ru
+    title: "Банки.ру: новости"
+    focus: Банки, продукты и тарифы, конкуренты
+    feed_url: https://www.banki.ru/xml/news.rss
     trust_tier: general

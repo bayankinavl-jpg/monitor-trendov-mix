@@ -109,7 +109,7 @@ def _write_keywords_sheet(wb: Workbook) -> None:
     ws.append(["Группа", "Слова / отрасли"])
     for cell in ws[1]:
         cell.font = Font(bold=True)
-    for group in ("acts_and_bodies", "stages", "changes", "topics", "exclusions", "abbreviations"):
+    for group in ("acts_and_bodies", "stages", "markers", "changes", "topics", "exclusions", "abbreviations"):
         ws.append([group, ", ".join(raw.get(group, []))])
     for entry in raw.get("industries", []):
         ws.append(["industries", f"{', '.join(entry['words'])} -> {', '.join(entry['okved'])}"])

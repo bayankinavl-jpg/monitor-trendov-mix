@@ -89,3 +89,21 @@ CREATE TABLE IF NOT EXISTS news_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_credibility ON news_items(credibility);
+
+-- Все прочитанные статьи (а не только отобранные регуляторные): по ним
+-- считаются тренды. tags_json — темы и конкуренты из trends.yml,
+-- tags_version — версия словаря, по которой статья размечена.
+CREATE TABLE IF NOT EXISTS articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    link TEXT NOT NULL,
+    title TEXT NOT NULL,
+    text TEXT,
+    published_date TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    tags_json TEXT,
+    tags_version TEXT,
+    first_seen TEXT NOT NULL,
+    UNIQUE(link)
+);
+
+CREATE INDEX IF NOT EXISTS idx_articles_date ON articles(published_date);

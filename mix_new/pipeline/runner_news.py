@@ -14,7 +14,7 @@ from pipeline.dedupe_news import cluster_leads, independent_source_count
 from pipeline.keywords_engine import get_keyword_set
 from pipeline.link_registry import find_related_act_id
 from journal.request_log import RequestLogger
-from registry.db import upsert_news_item, write_journal_entry
+from registry.db import save_articles, upsert_news_item, write_journal_entry
 from sources.news_scan import scan_all_feeds
 from sources.sources_config import NewsSource, load_sources
 
@@ -29,6 +29,7 @@ class RunSummary:
     new_count: int = 0
     updated_count: int = 0
     repeat_count: int = 0
+    articles_new: int = 0  # новых статей для трендов
 
 
 def run(conn: sqlite3.Connection, since: date, until: date, sources: list[NewsSource] | None = None) -> RunSummary:
@@ -37,7 +38,11 @@ def run(conn: sqlite3.Connection, since: date, until: date, sources: list[NewsSo
 
     sources = sources or load_sources()
     request_logger = RequestLogger()
-    leads, feed_errors, read_count = scan_all_feeds(since, until, sources=sources, request_logger=request_logger)
+    all_items: list = []
+    leads, feed_errors, read_count = scan_all_feeds(
+        since, until, sources=sources, request_logger=request_logger, all_items=all_items
+    )
+    articles_new = save_articles(conn, all_items)
 
     summary = RunSummary(
         run_id=run_id,
@@ -45,6 +50,7 @@ def run(conn: sqlite3.Connection, since: date, until: date, sources: list[NewsSo
         sources_failed=feed_errors,
         read_count=read_count,
         selected_count=len(leads),
+        articles_new=articles_new,
     )
 
     keyword_set = get_keyword_set()

@@ -5,3 +5,10 @@ __pycache__/
 data/registry.sqlite3
 data/exports/
 logs/
+
+# Локальные файлы, которые не нужны в репозитории
+.DS_Store
+data/registry_*.sqlite3
+/rss*.rss
+*.zip
+web/

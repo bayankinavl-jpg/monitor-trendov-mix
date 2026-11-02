@@ -16,6 +16,7 @@ from config import HTTP_RETRY_COUNT, HTTP_TIMEOUT, HTTP_USER_AGENT, REQUEST_DELA
 from pipeline import keywords_engine
 from pipeline.normalize import to_moscow_tz
 from sources.sources_config import NewsSource, load_sources
+from sources.telegram_scan import NotTelegramPageError, parse_channel_html
 from journal.request_log import RequestLogger
 
 
@@ -66,13 +67,17 @@ def scan_all_feeds(
     until: date,
     sources: list[NewsSource] | None = None,
     request_logger: RequestLogger | None = None,
+    all_items: list[NewsLead] | None = None,
 ) -> tuple[list[NewsLead], dict[str, str], int]:
     """Возвращает (найденные наводки, {имя_источника: причина ошибки},
     сколько новостей всего прочитано до фильтрации по ключевым словам).
 
     Недоступность одного источника не останавливает сканирование
     остальных — ошибки собираются и возвращаются журналу вызывающей
-    стороной, не подменяются новостями из других лент."""
+    стороной, не подменяются новостями из других лент.
+
+    Если передан список all_items, в него дописываются все прочитанные за
+    период новости, а не только отобранные: по ним считаются тренды."""
     sources = sources or load_sources()
     request_logger = request_logger or RequestLogger()
     leads: list[NewsLead] = []
@@ -98,6 +103,12 @@ def scan_all_feeds(
                 if not (since <= published_date <= until):
                     continue
             read_count += 1
+            if all_items is not None:
+                all_items.append(NewsLead(
+                    title=title.strip(), link=link.strip(), annotation=annotation.strip(),
+                    published=to_moscow_tz(published) if published else None,
+                    source_name=source.name, trust_tier=source.trust_tier, matched_keywords=[],
+                ))
             result = keywords_engine.match(title, annotation)
             if not result.passed:
                 continue
@@ -126,12 +137,14 @@ def _fetch_feed(
             resp = session.get(source.feed_url, timeout=HTTP_TIMEOUT, allow_redirects=True)
             request_logger.log(source.feed_url, resp.status_code)
             resp.raise_for_status()
+            if source.kind == "telegram":
+                return parse_channel_html(resp.content)
             return _parse_rss(resp.content)
         except requests.exceptions.RequestException as exc:
             last_exc = exc
             request_logger.log(source.feed_url, "ERROR", str(exc))
             continue
-        except NotRssError as exc:
+        except (NotRssError, NotTelegramPageError) as exc:
             request_logger.log(source.feed_url, "NOT_RSS", str(exc))
             raise FeedUnavailableError(f"{source.name}: ответ не RSS — {exc}") from exc
         except ET.ParseError as exc:

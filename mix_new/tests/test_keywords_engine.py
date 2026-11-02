@@ -3,6 +3,8 @@ from pipeline.keywords_engine import IndustryGroup, KeywordSet, match
 _KS = KeywordSet(
     acts_and_bodies=["минпромторг", "федеральный закон"],
     stages=["вступает в силу", "опубликован"],
+    markers=["федеральный закон", "закон"],
+    actions=["изменить", "поднять", "запретить", "снизить", "обновить"],
     changes=["ставка", "перечень", "запретить"],
     topics=["маркировка"],
     exclusions=["губернатор", "муниципальный"],
@@ -23,7 +25,7 @@ def test_passes_with_change_and_body():
 
 
 def test_word_forms_match_normal_form():
-    for title in ("Минпромторг поднял ставки", "Минпромторг: ставкам конец", "Ставкой займётся Минпромторг"):
+    for title in ("Минпромторг поднял ставки", "Минпромторг изменил порядок: ставкам конец", "Ставку изменил Минпромторг"):
         assert match(title, keyword_set=_KS).passed is True, title
 
 
@@ -77,3 +79,22 @@ def test_industry_match_returns_group():
 
 def test_case_insensitive():
     assert match("МИНПРОМТОРГ поднял СТАВКУ", keyword_set=_KS).passed is True
+
+
+def test_body_alone_is_not_enough():
+    # Орган и слово-изменение без признака акта или глагола: не регуляторное изменение.
+    assert match("Минпромторг: ставка выросла", keyword_set=_KS).passed is False
+
+
+def test_verb_without_body_is_not_a_signal():
+    # Компания «изменила» правила для своих клиентов: орган не назван.
+    assert match("Магазин изменил правила маркировка цен", keyword_set=_KS).passed is False
+
+
+def test_act_kind_alone_is_not_a_subject():
+    assert match("Федеральный закон об аттракционах вступает в силу", keyword_set=_KS).passed is False
+
+
+def test_signal_only_in_long_text_is_not_enough():
+    text = "Подробности для бизнеса. " * 3 + "Закон об этом уже принят."
+    assert match("Вебинар про маркировку", text, keyword_set=_KS).passed is False

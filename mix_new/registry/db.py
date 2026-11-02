@@ -403,3 +403,50 @@ def upsert_news_item(conn: sqlite3.Connection, item: NewsItem) -> tuple[int, Rec
 def list_news_items(conn: sqlite3.Connection) -> list[NewsItem]:
     rows = conn.execute("SELECT * FROM news_items ORDER BY published_at DESC").fetchall()
     return [_row_to_news_item(r) for r in rows]
+
+
+# ---- Статьи для трендов ----
+
+ARTICLE_TEXT_LIMIT = 2000
+
+
+def save_articles(conn: sqlite3.Connection, leads) -> int:
+    """Сохраняет все прочитанные статьи (NewsLead). Повтор по ссылке
+    пропускается. Возвращает число новых статей."""
+    from pipeline.normalize import normalize_url
+    from pipeline.trends import clean_text
+
+    today = date.today().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+    for lead in leads:
+        if not lead.link or not lead.title:
+            continue
+        published = lead.published.date().isoformat() if lead.published else today
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO articles (link, title, text, published_date, source_name, first_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (normalize_url(lead.link), lead.title, clean_text(lead.annotation)[:ARTICLE_TEXT_LIMIT],
+             published, lead.source_name, now),
+        )
+        added += cur.rowcount
+    conn.commit()
+    return added
+
+
+def retag_articles(conn: sqlite3.Connection, trends=None) -> int:
+    """Размечает темами и конкурентами статьи, размеченные старой версией
+    словаря trends.yml (или ещё не размеченные). Возвращает число статей."""
+    from pipeline.trends import get_trends, tag_article
+
+    trends = trends or get_trends()
+    rows = conn.execute(
+        "SELECT id, title, text FROM articles WHERE tags_version IS NULL OR tags_version != ?",
+        (trends.version,),
+    ).fetchall()
+    for row in rows:
+        tags = tag_article(row["title"], row["text"], trends)
+        conn.execute("UPDATE articles SET tags_json = ?, tags_version = ? WHERE id = ?",
+                     (json.dumps(tags), trends.version, row["id"]))
+    conn.commit()
+    return len(rows)

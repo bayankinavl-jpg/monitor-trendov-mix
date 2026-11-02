@@ -45,6 +45,7 @@ def render_news_report(conn: sqlite3.Connection, run_id: str, summary) -> str:
         f"новых: {summary.new_count}, обновлено: {summary.updated_count}, "
         f"повторов: {summary.repeat_count}\n"
     )
+    lines.append(f"Новых статей для трендов: {getattr(summary, 'articles_new', 0)}\n")
 
     if summary.sources_failed:
         lines.append("## Источники, которые не ответили\n")

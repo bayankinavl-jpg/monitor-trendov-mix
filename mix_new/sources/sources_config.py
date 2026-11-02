@@ -15,7 +15,9 @@ class NewsSource:
     name: str
     focus: str
     feed_url: str
-    trust_tier: str  # official_publication | legal | general
+    trust_tier: str  # primary_source | official_publication | legal | general
+    title: str = ""  # человекочитаемое название для страницы; без него показывается name
+    kind: str = "rss"  # rss | telegram (feed_url = https://t.me/s/<канал>)
 
     @property
     def domain(self) -> str:
